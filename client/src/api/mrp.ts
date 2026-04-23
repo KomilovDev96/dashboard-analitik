@@ -26,6 +26,9 @@ export const mrpApi = {
   getLastUpdate: () =>
     api.get<ApiResponse<{ lastUpdate: string; serverDate: string; isToday: boolean; daysAgo: number }>>('/mrp/filters/last-update'),
 
+  checkSync: () =>
+    api.get<ApiResponse<{ updated: boolean; prevDate: string; newDate: string; message: string }>>('/sync/check'),
+
   getReport: (filters: MrpFilters) =>
     api.get<ApiResponse<MrpReport>>(`/mrp/report?${buildQuery(filters)}`),
 

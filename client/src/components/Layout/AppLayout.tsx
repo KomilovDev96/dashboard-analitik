@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Layout, Menu, Avatar, Dropdown, Typography, Space, Tag, Progress } from 'antd';
 import {
   BarChartOutlined,
-  LineChartOutlined,
   TeamOutlined,
   LogoutOutlined,
   UserOutlined,
@@ -84,7 +83,7 @@ function HeaderProgressBar() {
             ? '#52c41a'
             : { '0%': '#667eea', '100%': '#764ba2' }
           }
-          trailColor={isDone ? '#d9f7be' : '#e0dcff'}
+          railColor={isDone ? '#d9f7be' : '#e0dcff'}
           status={isDone ? 'success' : 'active'}
           format={(pct) => (
             <span style={{ fontSize: 11, fontWeight: 700, color: isDone ? '#389e0d' : '#5b4fcf' }}>

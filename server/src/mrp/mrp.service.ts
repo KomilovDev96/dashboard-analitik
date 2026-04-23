@@ -9,6 +9,32 @@ const CACHE_TTL = {
   REPORT: 86400,  // until end of day
 };
 
+// Подзапрос: Заказано = A - B
+// A = сумма Количество из УникальнаяЗаказПоставщику_Товары (с дедупликацией по uuid+Номенклатура_Key)
+// B = сумма quantity из purchases, у которых purchase_order+product_id есть в УникальнаяЗаказПоставщику
+const ZAKAZANO_SUBQUERY = `
+  SELECT
+    z."Номенклатура_Key",
+    sum(z."Количество") - coalesce(sum(p.qty), 0) AS zakazano
+  FROM (
+    SELECT uuid, "Номенклатура_Key", sum("Количество") AS "Количество"
+    FROM "ЗаказПоставщику_Товары"
+    WHERE "Отменено" = false
+    GROUP BY uuid, "Номенклатура_Key"
+  ) z
+  LEFT JOIN (
+    SELECT product_id, sum(quantity) AS qty
+    FROM purchases
+    WHERE concat(toString(purchase_order), toString(product_id)) IN (
+      SELECT concat(toString(uuid), toString("Номенклатура_Key"))
+      FROM "ЗаказПоставщику_Товары"
+      WHERE "Отменено" = false
+    )
+    GROUP BY product_id
+  ) p ON z."Номенклатура_Key" = p.product_id
+  GROUP BY z."Номенклатура_Key"
+`;
+
 @Injectable()
 export class MrpService {
   private readonly logger = new Logger(MrpService.name);
@@ -73,25 +99,21 @@ export class MrpService {
     const cached = await this.cache.get<{ lastUpdate: string; serverDate: string; isToday: boolean; daysAgo: number }>(cacheKey);
     if (cached) return cached;
 
-    const rows = await this.clickhouse.query<{
-      lastUpdate: string;
-      serverDate: string;
-      daysAgo: string;
-    }>(
-      `SELECT
-         formatDateTime(max("Дата"), '%Y-%m-%d')             AS lastUpdate,
-         formatDateTime(now(),       '%Y-%m-%d')             AS serverDate,
-         toInt32(dateDiff('day', max("Дата"), toDate(now()))) AS daysAgo
-       FROM "ТоварыНаСкладах"
-       WHERE "Дата" <= toDate(now())`,
+    const rows = await this.clickhouse.query<{ lastUpdate: string }>(
+      `SELECT formatDateTime(max("Дата"), '%Y-%m-%d') AS lastUpdate
+       FROM "ТоварыНаСкладах"`,
     );
 
-    const row = rows[0];
-    const daysAgo = Math.max(0, parseInt(row?.daysAgo ?? '0', 10));
+    const lastUpdate = rows[0]?.lastUpdate ?? '';
+    // Считаем daysAgo на стороне сервера (Node.js), не доверяем часовому поясу ClickHouse
+    const serverDate = new Date().toISOString().slice(0, 10);
+    const daysAgo = lastUpdate
+      ? Math.max(0, Math.floor((Date.now() - new Date(lastUpdate).getTime()) / 86_400_000))
+      : 0;
     const result = {
-      lastUpdate: row?.lastUpdate ?? '',
-      serverDate: row?.serverDate ?? '',
-      isToday:    daysAgo === 0,
+      lastUpdate,
+      serverDate,
+      isToday: daysAgo === 0,
       daysAgo,
     };
 
@@ -164,12 +186,22 @@ export class MrpService {
           ph."Уровень_4"                                  AS level_4,
           s."Наименование"                                AS warehouse,
           argMax(t."КонечныйОстаток", t."Дата")          AS balance,
-          formatDateTime(max(t."Дата"), '%d.%m.%Y')       AS balance_date
+          formatDateTime(max(t."Дата"), '%d.%m.%Y')       AS balance_date,
+          any(coalesce(pit.in_transit, 0))                AS in_transit,
+          any(coalesce(zk.zakazano, 0))                   AS zakazano
         FROM "ТоварыНаСкладах" t
         INNER JOIN "Номенклатура" n      ON t."Номенклатура_Key"    = n.uuid
         INNER JOIN products_hierarchy ph ON n."ВидНоменклатуры_Key" = ph.uuid
         INNER JOIN "Склады" s            ON t."Склад_Key"           = s.uuid
-        WHERE t."Дата" <= toDate(now())
+        LEFT JOIN (
+          SELECT product_id, sum(quantity) AS in_transit
+          FROM purchases
+          WHERE "Регистратор_Key" NOT IN (
+            SELECT DISTINCT "Распоряжение_Key" FROM "ПоступлениеТоваров_Товары"
+          )
+          GROUP BY product_id
+        ) pit ON t."Номенклатура_Key" = pit.product_id
+        LEFT JOIN (${ZAKAZANO_SUBQUERY}) zk ON t."Номенклатура_Key" = zk."Номенклатура_Key"
         GROUP BY
           n."Наименование", ph."Уровень_1", ph."Уровень_2",
           ph."Уровень_3", ph."Уровень_4", s."Наименование"
@@ -199,7 +231,7 @@ export class MrpService {
 
       // Get the preloaded date
       const dateRows = await this.clickhouse.query<{ d: string }>(
-        `SELECT formatDateTime(max("Дата"), '%Y-%m-%d') AS d FROM "ТоварыНаСкладах" WHERE "Дата" <= toDate(now())`,
+        `SELECT formatDateTime(max("Дата"), '%Y-%m-%d') AS d FROM "ТоварыНаСкладах"`,
       );
       const preloadDate = dateRows[0]?.d ?? '';
 
@@ -304,11 +336,22 @@ export class MrpService {
         ph."Уровень_4"                                  AS level_4,
         s."Наименование"                                AS warehouse,
         argMax(t."КонечныйОстаток", t."Дата")          AS balance,
-        formatDateTime(max(t."Дата"), '%d.%m.%Y')       AS balance_date
+        formatDateTime(max(t."Дата"), '%d.%m.%Y')       AS balance_date,
+        any(coalesce(pit.in_transit, 0))                AS in_transit,
+        any(coalesce(zk.zakazano, 0))                   AS zakazano
       FROM "ТоварыНаСкладах" t
       INNER JOIN "Номенклатура" n      ON t."Номенклатура_Key"    = n.uuid
       INNER JOIN products_hierarchy ph ON n."ВидНоменклатуры_Key" = ph.uuid
       INNER JOIN "Склады" s            ON t."Склад_Key"           = s.uuid
+      LEFT JOIN (
+        SELECT product_id, sum(quantity) AS in_transit
+        FROM purchases
+        WHERE "Регистратор_Key" NOT IN (
+          SELECT DISTINCT "Распоряжение_Key" FROM "ПоступлениеТоваров_Товары"
+        )
+        GROUP BY product_id
+      ) pit ON t."Номенклатура_Key" = pit.product_id
+      LEFT JOIN (${ZAKAZANO_SUBQUERY}) zk ON t."Номенклатура_Key" = zk."Номенклатура_Key"
       ${where}
       GROUP BY
         t."Номенклатура_Key", t."Склад_Key",
@@ -328,4 +371,6 @@ export interface MrpRow {
   category: string;
   warehouse: string;
   balance: number;
+  in_transit: number;
+  zakazano: number;
 }

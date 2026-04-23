@@ -59,8 +59,19 @@ export const useMrpStore = create<MrpState>()(
       setFilters: (filters) =>
         set((s) => ({ filters: { ...s.filters, ...filters, page: 1 } }), false, 'setFilters'),
 
-      resetFilters: () =>
-        set({ filters: defaultFilters }, false, 'resetFilters'),
+      resetFilters: () => {
+        const { preloadedDate, preloadedData } = get();
+        if (preloadedDate) {
+          set({
+            filters: { ...defaultFilters, dateTo: preloadedDate, dateFrom: `${new Date().getFullYear()}-01-01` },
+            data: preloadedData,
+            totalRows: preloadedData.length,
+            stream: { ...defaultStream, progress: 100 },
+          }, false, 'resetFilters');
+        } else {
+          set({ filters: defaultFilters }, false, 'resetFilters');
+        }
+      },
 
       setStreamData: (data, total) =>
         set({ data, totalRows: total, stream: { ...defaultStream, progress: 100 } }, false, 'setStreamData'),
@@ -81,6 +92,11 @@ export const useMrpStore = create<MrpState>()(
           preloadedDate: date,
           isPreloaded: true,
           preloadStream: { ...defaultStream, progress: 100 },
+          // Автоматически показываем все данные сразу без клика "Загрузить"
+          data,
+          totalRows: data.length,
+          stream: { ...defaultStream, progress: 100 },
+          filters: { page: 1, pageSize: 20, dateTo: date, dateFrom: `${new Date().getFullYear()}-01-01` },
         }, false, 'setPreloadedData'),
 
       setPreloadProgress: (pct, message, loaded = 0, total = 0) =>

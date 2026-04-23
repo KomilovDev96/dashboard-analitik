@@ -51,7 +51,11 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   async set(key: string, value: unknown, ttlSeconds = 300): Promise<void> {
     if (!this.connected) return;
     try {
-      await this.redis.set(key, JSON.stringify(value), 'EX', ttlSeconds);
+      if (ttlSeconds === 0) {
+        await this.redis.set(key, JSON.stringify(value)); // без TTL
+      } else {
+        await this.redis.set(key, JSON.stringify(value), 'EX', ttlSeconds);
+      }
     } catch {
       // silent fail
     }
@@ -73,6 +77,15 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       if (keys.length) await this.redis.del(...keys);
     } catch {
       // silent fail
+    }
+  }
+
+  async keys(pattern: string): Promise<string[]> {
+    if (!this.connected) return [];
+    try {
+      return await this.redis.keys(pattern);
+    } catch {
+      return [];
     }
   }
 }

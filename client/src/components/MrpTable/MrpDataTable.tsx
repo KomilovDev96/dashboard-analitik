@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useTransition, useRef, useEffect, useCallback } from 'react';
 import { Table, Typography, Input, Empty, Row, Col, Skeleton, Button, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   SearchOutlined, DatabaseOutlined, ShopOutlined,
   AppstoreOutlined, MinusSquareOutlined, PlusSquareOutlined,
-  FolderOutlined, FolderOpenOutlined, TagOutlined,
+  FolderOutlined, FolderOpenOutlined, TagOutlined, LoadingOutlined,
 } from '@ant-design/icons';
 import { useMrpStore } from '../../stores/mrpStore';
 import type { MrpRow } from '../../types';
@@ -18,9 +18,11 @@ const LEVEL_COLORS = ['#6366f1', '#8b5cf6', '#a855f7', '#ec4899'];
 interface LevelRow {
   key: string;
   rowType: 'level';
-  depth: number;          // 0..3 = L1..L4
+  depth: number;
   label: string;
   balance: number;
+  in_transit: number;
+  zakazano: number;
   itemCount: number;
   children: TreeRow[];
 }
@@ -29,6 +31,8 @@ interface ProductRow {
   rowType: 'product';
   label: string;
   balance: number;
+  in_transit: number;
+  zakazano: number;
   itemCount: number;
   children: WarehouseRow[];
 }
@@ -86,43 +90,45 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
 
   const root: NodeMap = new Map();
 
+  // in_transit одинаков для всех складов одного товара — считаем только один раз
+  // in_transit и zakazano одинаковы для всех складов одного товара — считаем только раз
+  const seenPerProduct = new Set<string>();
+
   for (const r of rows) {
     const path = getPath(r);
+    const inTransit = Number(r.in_transit ?? 0);
+    const zakazano  = Number(r.zakazano  ?? 0);
+    const isFirst   = !seenPerProduct.has(r.product_name);
+    if (isFirst) seenPerProduct.add(r.product_name);
+
     let cur = root;
     let curKey = '';
 
-    // Build level nodes
     for (let i = 0; i < path.length; i++) {
       const seg = path[i];
       curKey = `${curKey}|${seg}`;
       if (!cur.has(curKey)) {
         const node: LevelRow = {
-          key: curKey,
-          rowType: 'level',
-          depth: i,
-          label: seg,
-          balance: 0,
-          itemCount: 0,
-          children: [],
+          key: curKey, rowType: 'level', depth: i, label: seg,
+          balance: 0, in_transit: 0, zakazano: 0, itemCount: 0, children: [],
         };
         cur.set(curKey, { row: node, children: new Map() });
       }
       const entry = cur.get(curKey)!;
       (entry.row as LevelRow).balance += Number(r.balance);
+      if (isFirst) {
+        (entry.row as LevelRow).in_transit += inTransit;
+        (entry.row as LevelRow).zakazano  += zakazano;
+      }
       (entry.row as LevelRow).itemCount += 1;
       cur = entry.children;
     }
 
-    // Product node
     const prodKey = `${curKey}|prod:${r.product_name}`;
     if (!cur.has(prodKey)) {
       const node: ProductRow = {
-        key: prodKey,
-        rowType: 'product',
-        label: r.product_name,
-        balance: 0,
-        itemCount: 0,
-        children: [],
+        key: prodKey, rowType: 'product', label: r.product_name,
+        balance: 0, in_transit: inTransit, zakazano, itemCount: 0, children: [],
       };
       cur.set(prodKey, { row: node, children: new Map() });
     }
@@ -171,13 +177,69 @@ function collectAllKeys(rows: TreeRow[]): string[] {
   return keys;
 }
 
+// ─── SearchInput — изолирован чтобы ре-рендер инпута не трогал таблицу ───────
+function SearchInput({ onSearch }: { onSearch: (v: string) => void }) {
+  const [value, setValue] = useState('');
+  const [loading, setLoading] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setValue(val);
+    setLoading(true);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      onSearch(val);
+      setLoading(false);
+    }, 400);
+  };
+
+  const handleClear = () => {
+    setValue('');
+    setLoading(false);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    onSearch('');
+  };
+
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
+  return (
+    <Input
+      prefix={
+        loading
+          ? <LoadingOutlined style={{ color: '#667eea', fontSize: 13 }} spin />
+          : <SearchOutlined style={{ color: value ? '#667eea' : '#bbb', fontSize: 13, transition: 'color 0.2s' }} />
+      }
+      placeholder="Поиск по номенклатуре, категории, складу..."
+      value={value}
+      onChange={handleChange}
+      onClear={handleClear}
+      style={{
+        borderRadius: 10,
+        maxWidth: 380,
+        border: `1.5px solid ${value ? '#667eea55' : '#ebebeb'}`,
+        transition: 'border-color 0.2s',
+      }}
+      allowClear
+    />
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function MrpDataTable() {
   const data = useMrpStore((s) => s.data);
   const totalRows = useMrpStore((s) => s.totalRows);
   const stream = useMrpStore((s) => s.stream);
   const [search, setSearch] = useState('');
+  const [isPending, startTransition] = useTransition();
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
+
+  const handleSearch = useCallback((val: string) => {
+    startTransition(() => {
+      setSearch(val);
+      setExpandedKeys([]);
+    });
+  }, [startTransition]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return data;
@@ -195,7 +257,25 @@ export default function MrpDataTable() {
 
   const toggleAll = () => setExpandedKeys(allExpanded ? [] : allKeys);
 
-  const totalBalance = useMemo(() => filtered.reduce((s, r) => s + Number(r.balance), 0), [filtered]);
+  const totalBalance    = useMemo(() => filtered.reduce((s, r) => s + Number(r.balance), 0), [filtered]);
+  // in_transit суммируем один раз на товар (не на склад)
+  const totalInTransit = useMemo(() => {
+    const seen = new Set<string>();
+    return filtered.reduce((s, r) => {
+      if (seen.has(r.product_name)) return s;
+      seen.add(r.product_name);
+      return s + Number(r.in_transit ?? 0);
+    }, 0);
+  }, [filtered]);
+
+  const totalZakazano = useMemo(() => {
+    const seen = new Set<string>();
+    return filtered.reduce((s, r) => {
+      if (seen.has(r.product_name)) return s;
+      seen.add(r.product_name);
+      return s + Number(r.zakazano ?? 0);
+    }, 0);
+  }, [filtered]);
   const uniqueL1 = treeData.length;
 
   // ── Columns ────────────────────────────────────────────────────────────────
@@ -274,6 +354,56 @@ export default function MrpDataTable() {
         );
       },
     },
+    {
+      title: 'В пути',
+      dataIndex: 'in_transit',
+      width: 150,
+      align: 'right',
+      sorter: (a, b) => Number((a as LevelRow | ProductRow).in_transit ?? 0) - Number((b as LevelRow | ProductRow).in_transit ?? 0),
+      render: (_val: number, record) => {
+        if (record.rowType === 'warehouse') return null;
+        const n = Number(record.in_transit ?? 0);
+        if (n === 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+        const isLevel = record.rowType === 'level';
+        return (
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            background: isLevel ? '#fef3c715' : '#fef3c725',
+            border: isLevel ? '1px solid #f59e0b30' : 'none',
+            borderRadius: 8, padding: '3px 12px', minWidth: 64,
+          }}>
+            <Text strong style={{ color: '#f59e0b', fontSize: isLevel ? 14 : 13 }}>
+              {n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
+            </Text>
+          </div>
+        );
+      },
+    },
+    {
+      title: 'Заказано',
+      dataIndex: 'zakazano',
+      width: 150,
+      align: 'right',
+      sorter: (a, b) => Number((a as LevelRow | ProductRow).zakazano ?? 0) - Number((b as LevelRow | ProductRow).zakazano ?? 0),
+      render: (_val: number, record) => {
+        if (record.rowType === 'warehouse') return null;
+        const n = Number(record.zakazano ?? 0);
+        if (n <= 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+        const isLevel = record.rowType === 'level';
+        return (
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            background: isLevel ? '#eff6ff' : '#dbeafe',
+            border: isLevel ? '1px solid #3b82f630' : 'none',
+            borderRadius: 8, padding: '3px 12px', minWidth: 64,
+          }}>
+            <Text strong style={{ color: '#3b82f6', fontSize: isLevel ? 14 : 13 }}>
+              {n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
+            </Text>
+          </div>
+        );
+      },
+    },
   ];
 
   // ── Skeletons / empty states ───────────────────────────────────────────────
@@ -322,17 +452,27 @@ export default function MrpDataTable() {
           <StatCard title="Всего записей" value={totalRows} icon={<DatabaseOutlined />} color="#6366f1" />
         </Col>
         <Col xs={12} sm={6}>
-          <StatCard title="После фильтра" value={filtered.length} icon={<DatabaseOutlined />} color="#8b5cf6" />
-        </Col>
-        <Col xs={12} sm={6}>
-          <StatCard title="Категорий (L1)" value={uniqueL1} icon={<AppstoreOutlined />} color="#ec4899" />
-        </Col>
-        <Col xs={12} sm={6}>
           <StatCard
-            title="Общий остаток"
+            title="Остаток"
             value={totalBalance.toLocaleString('ru-RU', { maximumFractionDigits: 0 })}
             icon={<ShopOutlined />}
             color="#22c55e"
+          />
+        </Col>
+        <Col xs={12} sm={6}>
+          <StatCard
+            title="В пути"
+            value={totalInTransit.toLocaleString('ru-RU', { maximumFractionDigits: 0 })}
+            icon={<AppstoreOutlined />}
+            color="#f59e0b"
+          />
+        </Col>
+        <Col xs={12} sm={6}>
+          <StatCard
+            title="Заказано"
+            value={totalZakazano.toLocaleString('ru-RU', { maximumFractionDigits: 0 })}
+            icon={<DatabaseOutlined />}
+            color="#3b82f6"
           />
         </Col>
       </Row>
@@ -341,14 +481,7 @@ export default function MrpDataTable() {
       <div style={{ background: '#fff', borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
         {/* Toolbar */}
         <div style={{ padding: '14px 20px', borderBottom: '1px solid #f5f5f5', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Input
-            prefix={<SearchOutlined style={{ color: '#bbb' }} />}
-            placeholder="Поиск по номенклатуре, категории, складу..."
-            value={search}
-            onChange={e => { setSearch(e.target.value); setExpandedKeys([]); }}
-            style={{ borderRadius: 10, maxWidth: 380, border: '1.5px solid #ebebeb' }}
-            allowClear
-          />
+          <SearchInput onSearch={handleSearch} />
           <Tooltip title={allExpanded ? 'Свернуть все' : 'Развернуть все'}>
             <Button
               size="small"

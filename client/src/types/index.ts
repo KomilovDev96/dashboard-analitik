@@ -34,6 +34,8 @@ export interface MrpRow {
   warehouse: string;
   balance: number;
   balance_date?: string;
+  in_transit: number;
+  zakazano: number;
 }
 
 export interface MrpReport {
