@@ -15,11 +15,13 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-          antd: ['antd', '@ant-design/icons'],
-          query: ['@tanstack/react-query'],
-          state: ['zustand'],
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('react') || id.includes('react-router-dom')) return 'vendor';
+            if (id.includes('antd') || id.includes('@ant-design')) return 'antd';
+            if (id.includes('@tanstack')) return 'query';
+            if (id.includes('zustand')) return 'state';
+          }
         },
       },
     },

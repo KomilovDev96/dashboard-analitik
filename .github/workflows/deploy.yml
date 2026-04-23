@@ -1,0 +1,43 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          command_timeout: 10m
+          script: |
+            set -e
+            cd /root/dashboard-analitik
+
+            echo "--- Pulling latest code ---"
+            git fetch --all
+            git reset --hard origin/main
+
+            echo "--- Installing server deps & building ---"
+            cd /root/dashboard-analitik/server
+            npm ci --production=false
+            npm run build
+
+            echo "--- Installing client deps & building ---"
+            cd /root/dashboard-analitik/client
+            npm ci
+            npm run build
+
+            echo "--- Restarting PM2 ---"
+            cd /root/dashboard-analitik
+            pm2 reload dashboard-server || pm2 start ecosystem.config.js
+            pm2 save
+
+            echo "--- Done! ---"
