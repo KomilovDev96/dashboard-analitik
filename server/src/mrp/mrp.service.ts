@@ -99,21 +99,25 @@ export class MrpService {
     const cached = await this.cache.get<{ lastUpdate: string; serverDate: string; isToday: boolean; daysAgo: number }>(cacheKey);
     if (cached) return cached;
 
-    const rows = await this.clickhouse.query<{ lastUpdate: string }>(
-      `SELECT formatDateTime(max("Дата"), '%Y-%m-%d') AS lastUpdate
+    const rows = await this.clickhouse.query<{ lastUpdate: string; today: string }>(
+      `SELECT
+         formatDateTime(max("Дата"), '%Y-%m-%d') AS lastUpdate,
+         formatDateTime(now(), '%Y-%m-%d')        AS today
        FROM "ТоварыНаСкладах"`,
     );
 
     const lastUpdate = rows[0]?.lastUpdate ?? '';
-    // Считаем daysAgo на стороне сервера (Node.js), не доверяем часовому поясу ClickHouse
-    const serverDate = new Date().toISOString().slice(0, 10);
-    const daysAgo = lastUpdate
-      ? Math.max(0, Math.floor((Date.now() - new Date(lastUpdate).getTime()) / 86_400_000))
+    const serverDate = rows[0]?.today ?? new Date().toISOString().slice(0, 10);
+    const isToday = !!lastUpdate && lastUpdate === serverDate;
+    const daysAgo = lastUpdate && serverDate
+      ? Math.max(0, Math.floor(
+          (new Date(serverDate).getTime() - new Date(lastUpdate).getTime()) / 86_400_000,
+        ))
       : 0;
     const result = {
       lastUpdate,
       serverDate,
-      isToday: daysAgo === 0,
+      isToday,
       daysAgo,
     };
 
