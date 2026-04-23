@@ -75,6 +75,7 @@ export class ClickhouseService implements OnModuleInit {
         port: parseInt(this.baseUrl.port || '8123', 10),
         method: 'POST',
         path,
+        timeout: 8000,
         headers: {
           'Content-Type': 'text/plain; charset=utf-8',
           'Content-Length': body.length,
@@ -96,6 +97,10 @@ export class ClickhouseService implements OnModuleInit {
         });
       });
 
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('ClickHouse connection timeout'));
+      });
       req.on('error', reject);
       req.write(body);
       req.end();

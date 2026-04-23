@@ -38,7 +38,6 @@ export default function PreloadPage() {
   } = useMrpStore();
 
   useEffect(() => {
-    // Check sessionStorage first — survives Ctrl+R without hitting server
     const cached = loadFromSession();
     if (cached) {
       setPreloadedData(cached.data, cached.date);
@@ -49,23 +48,31 @@ export default function PreloadPage() {
 
     startPreloadStream();
 
+    // Таймаут 25 сек — если ClickHouse недоступен, всё равно переходим
+    const timeout = setTimeout(() => {
+      stopPreloadStream();
+      navigate('/dashboard', { replace: true });
+    }, 25_000);
+
     const close = mrpApi.streamPreload(
       (event) => {
         setPreloadProgress(event.pct, event.message ?? '', event.loaded, event.total);
       },
       (data, _total, date) => {
-        saveToSession(data, date);       // save for next refresh
+        clearTimeout(timeout);
+        saveToSession(data, date);
         setPreloadedData(data, date);
         stopPreloadStream();
         setTimeout(() => navigate('/dashboard', { replace: true }), 500);
       },
       () => {
+        clearTimeout(timeout);
         stopPreloadStream();
         setTimeout(() => navigate('/dashboard', { replace: true }), 500);
       },
     );
 
-    return () => close();
+    return () => { close(); clearTimeout(timeout); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pct = preloadStream.progress;
