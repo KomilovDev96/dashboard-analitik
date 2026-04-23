@@ -92,7 +92,7 @@ function LastUpdateBadge() {
             color: isLoading ? 'rgba(255,255,255,0.3)' : (isToday || daysAgo === 0) ? '#4ade80' : '#fb923c',
             display: 'block', lineHeight: 1.3,
           }}>
-            {isLoading ? 'загрузка...' : (isToday || daysAgo === 0) ? 'Сегодня обновился' : label}
+            {isLoading ? 'загрузка...' : (isToday || daysAgo === 0) ? 'Сегодня' : label}
             {!isToday && subLabel && (
               <span style={{ fontWeight: 400, marginLeft: 4, fontSize: 11 }}>({subLabel})</span>
             )}
