@@ -1,4 +1,4 @@
-name: Deploy to Server
+name: Deploy to Local Server
 
 on:
   push:
@@ -7,37 +7,38 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, local]
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          command_timeout: 10m
-          script: |
-            set -e
-            cd /root/dashboard-analitik
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-            echo "--- Pulling latest code ---"
-            git fetch --all
-            git reset --hard origin/main
+      - name: Install server deps & build
+        run: |
+          cd $GITHUB_WORKSPACE/server
+          npm install
+          npm run build
 
-            echo "--- Installing server deps & building ---"
-            cd /root/dashboard-analitik/server
-            npm ci --production=false
-            npm run build
+      - name: Install client deps & build
+        run: |
+          cd $GITHUB_WORKSPACE/client
+          npm install
+          npm run build
 
-            echo "--- Installing client deps & building ---"
-            cd /root/dashboard-analitik/client
-            npm ci
-            npm run build
+      - name: Copy env files
+        run: |
+          cp /home/ubuntu/dashboard-analitik/server/.env $GITHUB_WORKSPACE/server/.env
+          cp /home/ubuntu/dashboard-analitik/client/.env $GITHUB_WORKSPACE/client/.env
 
-            echo "--- Restarting PM2 ---"
-            cd /root/dashboard-analitik
-            pm2 reload dashboard-server || pm2 start ecosystem.config.js
-            pm2 save
+      - name: Sync to deploy folder & restart PM2
+        run: |
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            $GITHUB_WORKSPACE/ /home/ubuntu/dashboard-analitik/
 
-            echo "--- Done! ---"
+          cd /home/ubuntu/dashboard-analitik/server
+          npm install --omit=dev
+
+          pm2 reload dashboard-server || pm2 start /home/ubuntu/dashboard-analitik/ecosystem.config.js
+          pm2 save
+          echo "Deploy complete!"
