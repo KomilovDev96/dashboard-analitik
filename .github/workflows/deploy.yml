@@ -12,6 +12,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Copy env files BEFORE build
+        run: |
+          cp /home/ubuntu/dashboard-analitik/server/.env $GITHUB_WORKSPACE/server/.env
+          cp /home/ubuntu/dashboard-analitik/client/.env $GITHUB_WORKSPACE/client/.env
+          echo "VITE_API_URL from env:"
+          cat $GITHUB_WORKSPACE/client/.env
+
       - name: Install server deps & build
         run: |
           cd $GITHUB_WORKSPACE/server
@@ -23,11 +30,6 @@ jobs:
           cd $GITHUB_WORKSPACE/client
           npm install
           npm run build
-
-      - name: Copy env files
-        run: |
-          cp /home/ubuntu/dashboard-analitik/server/.env $GITHUB_WORKSPACE/server/.env
-          cp /home/ubuntu/dashboard-analitik/client/.env $GITHUB_WORKSPACE/client/.env
 
       - name: Sync to deploy folder & restart PM2
         run: |
