@@ -92,8 +92,8 @@ function LastUpdateBadge() {
             color: isLoading ? 'rgba(255,255,255,0.3)' : isToday ? '#4ade80' : '#fb923c',
             display: 'block', lineHeight: 1.3,
           }}>
-            {label}
-            {subLabel && (
+            {isLoading ? 'загрузка...' : isToday ? 'Сегодня обновился' : label}
+            {!isToday && subLabel && (
               <span style={{ fontWeight: 400, marginLeft: 4, fontSize: 11 }}>({subLabel})</span>
             )}
           </Text>
