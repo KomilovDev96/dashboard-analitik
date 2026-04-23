@@ -43,4 +43,8 @@ jobs:
 
           pm2 reload dashboard-server || pm2 start /home/ubuntu/dashboard-analitik/ecosystem.config.js
           pm2 save
+
+          redis-cli DEL mrp:preload:stream
+          redis-cli KEYS "mrp:report:*" | xargs -r redis-cli DEL
+          echo "Redis MRP cache cleared!"
           echo "Deploy complete!"
