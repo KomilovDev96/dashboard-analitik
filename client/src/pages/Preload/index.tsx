@@ -52,7 +52,7 @@ export default function PreloadPage() {
     const timeout = setTimeout(() => {
       stopPreloadStream();
       navigate('/dashboard', { replace: true });
-    }, 25_000);
+    }, 120_000);
 
     const close = mrpApi.streamPreload(
       (event) => {

@@ -75,7 +75,7 @@ export class ClickhouseService implements OnModuleInit {
         port: parseInt(this.baseUrl.port || '8123', 10),
         method: 'POST',
         path,
-        timeout: 8000,
+        timeout: 120000,
         headers: {
           'Content-Type': 'text/plain; charset=utf-8',
           'Content-Length': body.length,
