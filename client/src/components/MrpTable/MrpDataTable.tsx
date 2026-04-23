@@ -1,5 +1,7 @@
 import { useMemo, useState, useTransition, useRef, useEffect, useCallback } from 'react';
-import { Table, Typography, Input, Empty, Row, Col, Skeleton, Button, Tooltip } from 'antd';
+import { Table, Typography, Input, Empty, Row, Col, Skeleton, Button, Tooltip, Grid } from 'antd';
+
+const { useBreakpoint } = Grid;
 import type { ColumnsType } from 'antd/es/table';
 import {
   SearchOutlined, DatabaseOutlined, ShopOutlined,
@@ -227,12 +229,15 @@ function SearchInput({ onSearch }: { onSearch: (v: string) => void }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function MrpDataTable() {
+  const screens = useBreakpoint();
   const data = useMrpStore((s) => s.data);
   const totalRows = useMrpStore((s) => s.totalRows);
   const stream = useMrpStore((s) => s.stream);
   const [search, setSearch] = useState('');
   const [isPending, startTransition] = useTransition();
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
+
+  const colWidth = screens.xl ? 160 : screens.lg ? 140 : 120;
 
   const handleSearch = useCallback((val: string) => {
     startTransition(() => {
@@ -342,7 +347,7 @@ export default function MrpDataTable() {
     {
       title: 'Остаток',
       dataIndex: 'balance',
-      width: 180,
+      width: colWidth,
       align: 'right',
       sorter: (a, b) => Number(a.balance) - Number(b.balance),
       render: (val: number, record) => {
@@ -374,7 +379,7 @@ export default function MrpDataTable() {
     {
       title: 'В пути',
       dataIndex: 'in_transit',
-      width: 150,
+      width: colWidth,
       align: 'right',
       sorter: (a, b) => Number((a as LevelRow | ProductRow).in_transit ?? 0) - Number((b as LevelRow | ProductRow).in_transit ?? 0),
       render: (_val: number, record) => {
@@ -399,7 +404,7 @@ export default function MrpDataTable() {
     {
       title: 'Заказано',
       dataIndex: 'zakazano',
-      width: 150,
+      width: colWidth,
       align: 'right',
       sorter: (a, b) => Number((a as LevelRow | ProductRow).zakazano ?? 0) - Number((b as LevelRow | ProductRow).zakazano ?? 0),
       render: (_val: number, record) => {
@@ -497,20 +502,27 @@ export default function MrpDataTable() {
       {/* Table */}
       <div style={{ background: '#fff', borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
         {/* Toolbar */}
-        <div style={{ padding: '14px 20px', borderBottom: '1px solid #f5f5f5', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{
+          padding: '12px 16px',
+          borderBottom: '1px solid #f5f5f5',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          flexWrap: 'wrap',
+        }}>
           <SearchInput onSearch={handleSearch} />
           <Tooltip title={allExpanded ? 'Свернуть все' : 'Развернуть все'}>
             <Button
               size="small"
               icon={allExpanded ? <MinusSquareOutlined /> : <PlusSquareOutlined />}
               onClick={toggleAll}
-              style={{ borderRadius: 6, color: '#667eea', borderColor: '#667eea' }}
+              style={{ borderRadius: 6, color: '#667eea', borderColor: '#667eea', flexShrink: 0 }}
             >
               {allExpanded ? 'Свернуть' : 'Развернуть'} все
             </Button>
           </Tooltip>
-          <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>
-            <b>{uniqueL1}</b> категорий · <b>{filtered.length}</b> позиций
+          <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto', whiteSpace: 'nowrap' }}>
+            <b>{uniqueL1}</b> кат. · <b>{filtered.length}</b> поз.
           </Text>
         </div>
 
@@ -531,7 +543,7 @@ export default function MrpDataTable() {
             showTotal: total => `Итого: ${total} групп`,
             style: { padding: '10px 20px' },
           }}
-          scroll={{ x: 600, y: 'calc(100vh - 460px)' }}
+          scroll={{ x: 480, y: screens.xs ? 'calc(100vh - 520px)' : 'calc(100vh - 420px)' }}
           loading={stream.isStreaming}
           locale={{
             emptyText: (

@@ -49,7 +49,6 @@ function LastUpdateBadge() {
           description: `Данные обновлены: ${result.prevDate || '—'} → ${result.newDate}. Кэш очищен. Перезагрузите страницу.`,
           duration: 8,
         });
-        // Обновляем badge с новой датой
         qc.invalidateQueries({ queryKey: ['mrp-last-update'] });
       } else {
         notification.info({
@@ -66,8 +65,7 @@ function LastUpdateBadge() {
   };
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      {/* Дата обновления */}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -102,7 +100,6 @@ function LastUpdateBadge() {
         </div>
       </div>
 
-      {/* Кнопка проверки обновлений */}
       <Tooltip title="Проверить обновления в ClickHouse">
         <button
           onClick={handleCheck}
@@ -135,28 +132,29 @@ function LastUpdateBadge() {
 export default function DashboardPage() {
   return (
     <App>
-      <div style={{ padding: '24px 28px', maxWidth: 1600, margin: '0 auto' }}>
+      <div style={{ padding: 'clamp(12px, 2vw, 24px) clamp(12px, 2vw, 24px)', height: '100%', boxSizing: 'border-box' }}>
         {/* Page header */}
         <div style={{
           background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
           borderRadius: 16,
-          padding: '20px 28px',
-          marginBottom: 20,
+          padding: '16px clamp(16px, 2vw, 28px)',
+          marginBottom: 16,
           display: 'flex',
           alignItems: 'center',
-          gap: 16,
+          gap: 12,
+          flexWrap: 'wrap',
         }}>
           <img
             src="/logo.png"
             alt="MRP"
-            style={{ height: 52, width: 52, objectFit: 'contain', flexShrink: 0 }}
+            style={{ height: 48, width: 48, objectFit: 'contain', flexShrink: 0 }}
           />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: '#fff', lineHeight: 1.3 }}>
+          <div style={{ flex: 1, minWidth: 120 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: '#fff', lineHeight: 1.3 }}>
               MRP Отчёт
             </div>
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)', marginTop: 2 }}>
-              Остатки номенклатуры на складах в реальном времени
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', marginTop: 2 }}>
+              Остатки номенклатуры на складах
             </div>
           </div>
 
