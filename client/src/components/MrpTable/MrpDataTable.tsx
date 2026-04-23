@@ -288,34 +288,51 @@ export default function MrpDataTable() {
         if (record.rowType === 'level') {
           const color = LEVEL_COLORS[record.depth] ?? '#667eea';
           const isOpen = expandedKeys.includes(record.key);
+          const hasChildren = (record.children?.length ?? 0) > 0;
           return (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: record.depth * 8 }}>
-              <span style={{ color, fontSize: 14 }}>
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: record.depth * 16, cursor: hasChildren ? 'pointer' : 'default' }}
+              onClick={() => hasChildren && setExpandedKeys(isOpen ? expandedKeys.filter(k => k !== record.key) : [...expandedKeys, record.key])}
+            >
+              {hasChildren ? (
+                <span style={{ color: '#667eea', fontSize: 12, flexShrink: 0 }}>
+                  {isOpen ? <MinusSquareOutlined /> : <PlusSquareOutlined />}
+                </span>
+              ) : (
+                <span style={{ width: 12, flexShrink: 0 }} />
+              )}
+              <span style={{ color, fontSize: 14, flexShrink: 0 }}>
                 {isOpen ? <FolderOpenOutlined /> : <FolderOutlined />}
               </span>
-              <Text strong style={{ fontSize: 13, color }}>
-                {val}
-              </Text>
-              <Text type="secondary" style={{ fontSize: 11 }}>
-                {record.itemCount} поз.
-              </Text>
+              <Text strong style={{ fontSize: 13, color }}>{val}</Text>
+              <Text type="secondary" style={{ fontSize: 11 }}>{record.itemCount} поз.</Text>
             </div>
           );
         }
         if (record.rowType === 'product') {
+          const isOpen = expandedKeys.includes(record.key);
+          const hasChildren = (record.children?.length ?? 0) > 0;
           return (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 4 }}>
-              <TagOutlined style={{ color: '#94a3b8', fontSize: 13 }} />
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 32, cursor: hasChildren ? 'pointer' : 'default' }}
+              onClick={() => hasChildren && setExpandedKeys(isOpen ? expandedKeys.filter(k => k !== record.key) : [...expandedKeys, record.key])}
+            >
+              {hasChildren ? (
+                <span style={{ color: '#667eea', fontSize: 12, flexShrink: 0 }}>
+                  {isOpen ? <MinusSquareOutlined /> : <PlusSquareOutlined />}
+                </span>
+              ) : (
+                <span style={{ width: 12, flexShrink: 0 }} />
+              )}
+              <TagOutlined style={{ color: '#94a3b8', fontSize: 12, flexShrink: 0 }} />
               <Text style={{ fontSize: 13, color: '#1a1a2e' }}>{val}</Text>
-              <Text type="secondary" style={{ fontSize: 11 }}>
-                {record.itemCount} скл.
-              </Text>
+              <Text type="secondary" style={{ fontSize: 11 }}>{record.itemCount} скл.</Text>
             </div>
           );
         }
         // warehouse
         return (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 52 }}>
             <ShopOutlined style={{ color: '#bbb', fontSize: 12 }} />
             <Text style={{ fontSize: 12, color: '#555' }}>{val}</Text>
           </div>
@@ -506,18 +523,7 @@ export default function MrpDataTable() {
             expandedRowKeys: expandedKeys,
             onExpandedRowsChange: (keys) => setExpandedKeys(keys as string[]),
             rowExpandable: (r) => 'children' in r && (r.children?.length ?? 0) > 0,
-            expandIcon: ({ expanded, onExpand, record }) => {
-              const hasChildren = 'children' in record && (record.children?.length ?? 0) > 0;
-              if (!hasChildren) return <span style={{ marginRight: 22 }} />;
-              return (
-                <span
-                  onClick={e => onExpand(record, e)}
-                  style={{ cursor: 'pointer', marginRight: 6, color: '#667eea', fontSize: 13 }}
-                >
-                  {expanded ? <MinusSquareOutlined /> : <PlusSquareOutlined />}
-                </span>
-              );
-            },
+            showExpandColumn: false,
           }}
           pagination={{
             pageSize: 50,
