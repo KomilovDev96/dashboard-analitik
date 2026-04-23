@@ -23,15 +23,15 @@ const ZAKAZANO_SUBQUERY = `
     GROUP BY uuid, "Номенклатура_Key"
   ) z
   LEFT JOIN (
-    SELECT product_id, sum(quantity) AS qty
+    SELECT product_id, purchase_order, sum(quantity) AS qty
     FROM purchases
     WHERE concat(toString(purchase_order), toString(product_id)) IN (
       SELECT concat(toString(uuid), toString("Номенклатура_Key"))
       FROM "ЗаказПоставщику_Товары"
       WHERE "Отменено" = false
     )
-    GROUP BY product_id
-  ) p ON z."Номенклатура_Key" = p.product_id
+    GROUP BY product_id, purchase_order
+  ) p ON z."Номенклатура_Key" = p.product_id AND z.uuid = p.purchase_order
   GROUP BY z."Номенклатура_Key"
 `;
 
