@@ -33,6 +33,12 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
   return user?.role === 'super_admin' ? <>{children}</> : <Navigate to="/dashboard" replace />;
 }
 
+// Отдельный компонент — реактивно подписывается на isAuthenticated
+function PreloadRoute() {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  return isAuthenticated ? <PreloadPage /> : <Navigate to="/login" replace />;
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -51,15 +57,7 @@ export default function App() {
             <Routes>
               <Route path="/login" element={<LoginPage />} />
 
-              {/* Splash preload screen — auth required, no preload check */}
-              <Route
-                path="/preload"
-                element={
-                  useAuthStore.getState().isAuthenticated
-                    ? <PreloadPage />
-                    : <Navigate to="/login" replace />
-                }
-              />
+              <Route path="/preload" element={<PreloadRoute />} />
 
               <Route
                 path="/"
