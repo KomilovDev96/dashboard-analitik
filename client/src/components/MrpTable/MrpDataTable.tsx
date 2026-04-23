@@ -1,10 +1,12 @@
 import { useMemo, useState, useTransition, useRef, useEffect, useCallback } from 'react';
-import { Table, Typography, Input, Empty, Row, Col, Skeleton, Button, Tooltip } from 'antd';
+import { Table, Typography, Input, Empty, Row, Col, Skeleton, Button, Tooltip, Grid } from 'antd';
+const { useBreakpoint } = Grid;
 import type { ColumnsType } from 'antd/es/table';
 import {
   SearchOutlined, DatabaseOutlined, ShopOutlined,
   AppstoreOutlined, MinusSquareOutlined, PlusSquareOutlined,
   FolderOutlined, FolderOpenOutlined, TagOutlined, LoadingOutlined,
+  FullscreenOutlined, FullscreenExitOutlined,
 } from '@ant-design/icons';
 import { useMrpStore } from '../../stores/mrpStore';
 import type { MrpRow } from '../../types';
@@ -227,12 +229,32 @@ function SearchInput({ onSearch }: { onSearch: (v: string) => void }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function MrpDataTable() {
+  const screens = useBreakpoint();
   const data = useMrpStore((s) => s.data);
   const totalRows = useMrpStore((s) => s.totalRows);
   const stream = useMrpStore((s) => s.stream);
   const [search, setSearch] = useState('');
   const [isPending, startTransition] = useTransition();
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
+
+  const colWidth = screens.xl ? 160 : screens.lg ? 140 : 120;
+
+  const tableWrapRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      tableWrapRef.current?.requestFullscreen();
+    } else {
+      document.exitFullscreen();
+    }
+  }, []);
 
   const handleSearch = useCallback((val: string) => {
     startTransition(() => {
@@ -342,7 +364,7 @@ export default function MrpDataTable() {
     {
       title: 'Остаток',
       dataIndex: 'balance',
-      width: 180,
+      width: colWidth,
       align: 'right',
       sorter: (a, b) => Number(a.balance) - Number(b.balance),
       render: (val: number, record) => {
@@ -374,7 +396,7 @@ export default function MrpDataTable() {
     {
       title: 'В пути',
       dataIndex: 'in_transit',
-      width: 150,
+      width: colWidth,
       align: 'right',
       sorter: (a, b) => Number((a as LevelRow | ProductRow).in_transit ?? 0) - Number((b as LevelRow | ProductRow).in_transit ?? 0),
       render: (_val: number, record) => {
@@ -399,7 +421,7 @@ export default function MrpDataTable() {
     {
       title: 'Заказано',
       dataIndex: 'zakazano',
-      width: 150,
+      width: colWidth,
       align: 'right',
       sorter: (a, b) => Number((a as LevelRow | ProductRow).zakazano ?? 0) - Number((b as LevelRow | ProductRow).zakazano ?? 0),
       render: (_val: number, record) => {
@@ -495,23 +517,50 @@ export default function MrpDataTable() {
       </Row>
 
       {/* Table */}
-      <div style={{ background: '#fff', borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+      <div
+        ref={tableWrapRef}
+        style={{
+          background: '#fff',
+          borderRadius: isFullscreen ? 0 : 16,
+          overflow: 'hidden',
+          boxShadow: isFullscreen ? 'none' : '0 1px 4px rgba(0,0,0,0.06)',
+          display: 'flex',
+          flexDirection: 'column',
+          height: isFullscreen ? '100vh' : undefined,
+        }}
+      >
         {/* Toolbar */}
-        <div style={{ padding: '14px 20px', borderBottom: '1px solid #f5f5f5', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{
+          padding: '12px 16px',
+          borderBottom: '1px solid #f5f5f5',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          flexWrap: 'wrap',
+          flexShrink: 0,
+        }}>
           <SearchInput onSearch={handleSearch} />
           <Tooltip title={allExpanded ? 'Свернуть все' : 'Развернуть все'}>
             <Button
               size="small"
               icon={allExpanded ? <MinusSquareOutlined /> : <PlusSquareOutlined />}
               onClick={toggleAll}
-              style={{ borderRadius: 6, color: '#667eea', borderColor: '#667eea' }}
+              style={{ borderRadius: 6, color: '#667eea', borderColor: '#667eea', flexShrink: 0 }}
             >
               {allExpanded ? 'Свернуть' : 'Развернуть'} все
             </Button>
           </Tooltip>
-          <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>
-            <b>{uniqueL1}</b> категорий · <b>{filtered.length}</b> позиций
+          <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto', whiteSpace: 'nowrap' }}>
+            <b>{uniqueL1}</b> кат. · <b>{filtered.length}</b> поз.
           </Text>
+          <Tooltip title={isFullscreen ? 'Выйти из полноэкранного режима' : 'На весь экран'}>
+            <Button
+              size="small"
+              icon={isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+              onClick={toggleFullscreen}
+              style={{ borderRadius: 6, flexShrink: 0 }}
+            />
+          </Tooltip>
         </div>
 
         <Table<TreeRow>
@@ -531,7 +580,10 @@ export default function MrpDataTable() {
             showTotal: total => `Итого: ${total} групп`,
             style: { padding: '10px 20px' },
           }}
-          scroll={{ x: 600, y: 'calc(100vh - 460px)' }}
+          scroll={{
+            x: 480,
+            y: isFullscreen ? 'calc(100vh - 110px)' : screens.xs ? 'calc(100vh - 520px)' : 'calc(100vh - 420px)',
+          }}
           loading={stream.isStreaming}
           locale={{
             emptyText: (

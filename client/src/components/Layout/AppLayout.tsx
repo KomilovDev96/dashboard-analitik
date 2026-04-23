@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Layout, Menu, Avatar, Dropdown, Typography, Space, Tag, Progress } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Typography, Space, Tag, Progress, Drawer } from 'antd';
 import {
   BarChartOutlined,
   TeamOutlined,
@@ -17,6 +17,16 @@ import { useMrpStore } from '../../stores/mrpStore';
 
 const { Sider, Header, Content } = Layout;
 const { Text } = Typography;
+
+function useBreakpoint() {
+  const [width, setWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    const handler = () => setWidth(window.innerWidth);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return { isMobile: width < 768, isTablet: width >= 768 && width < 1100, width };
+}
 
 function HeaderProgressBar() {
   const stream = useMrpStore((s) => s.stream);
@@ -55,34 +65,27 @@ function HeaderProgressBar() {
         zIndex: 10,
       }}
     >
-      {/* Icon */}
       {isDone ? (
         <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 14 }} />
       ) : (
         <LoadingOutlined style={{ color: '#667eea', fontSize: 14 }} spin />
       )}
 
-      {/* Label */}
       <Text style={{ fontSize: 12, color: isDone ? '#389e0d' : '#5b4fcf', fontWeight: 600, whiteSpace: 'nowrap' }}>
         {isDone ? 'Загрузка завершена' : 'Загрузка данных...'}
       </Text>
 
-      {/* Counts */}
       {stream.total > 0 && (
         <Text style={{ fontSize: 12, color: '#888', whiteSpace: 'nowrap' }}>
           {stream.loaded.toLocaleString('ru-RU')} / {stream.total.toLocaleString('ru-RU')} записей
         </Text>
       )}
 
-      {/* Progress bar */}
       <div style={{ flex: 1, maxWidth: 400 }}>
         <Progress
           percent={stream.progress}
           size="small"
-          strokeColor={isDone
-            ? '#52c41a'
-            : { '0%': '#667eea', '100%': '#764ba2' }
-          }
+          strokeColor={isDone ? '#52c41a' : { '0%': '#667eea', '100%': '#764ba2' }}
           railColor={isDone ? '#d9f7be' : '#e0dcff'}
           status={isDone ? 'success' : 'active'}
           format={(pct) => (
@@ -94,7 +97,6 @@ function HeaderProgressBar() {
         />
       </div>
 
-      {/* Message */}
       {stream.progressMessage && !isDone && (
         <Text style={{ fontSize: 11, color: '#999', whiteSpace: 'nowrap' }}>
           {stream.progressMessage}
@@ -104,8 +106,53 @@ function HeaderProgressBar() {
   );
 }
 
+const SIDEBAR_STYLE: React.CSSProperties = {
+  background: 'linear-gradient(180deg, #1a1a2e 0%, #16213e 60%, #0f3460 100%)',
+};
+
+function SidebarContent({ onClose }: { onClose?: () => void }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const user = useAuthStore((s) => s.user);
+  const isSuperAdmin = user?.role === 'super_admin';
+
+  const menuItems = [
+    { key: '/dashboard', icon: <BarChartOutlined />, label: 'MRP Отчёт' },
+    ...(isSuperAdmin
+      ? [{ key: '/users', icon: <TeamOutlined />, label: 'Пользователи' }]
+      : []),
+  ];
+
+  return (
+    <>
+      <div
+        style={{
+          height: 64,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '0 12px',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+        }}
+      >
+        <img src="/logo.png" alt="MRP Dashboard" style={{ height: 56, objectFit: 'contain', maxWidth: '100%' }} />
+      </div>
+      <Menu
+        theme="dark"
+        mode="inline"
+        selectedKeys={[location.pathname]}
+        items={menuItems}
+        onClick={({ key }) => { navigate(key); onClose?.(); }}
+        style={{ background: 'transparent', borderRight: 0, marginTop: 8 }}
+      />
+    </>
+  );
+}
+
 export default function AppLayout() {
+  const { isMobile, isTablet } = useBreakpoint();
   const [collapsed, setCollapsed] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuthStore();
@@ -114,12 +161,11 @@ export default function AppLayout() {
   const progress = useMrpStore((s) => s.stream.progress);
   const showBar = isStreaming || (progress > 0 && progress <= 100);
 
-  const menuItems = [
-    { key: '/dashboard', icon: <BarChartOutlined />, label: 'MRP Отчёт' },
-    ...(isSuperAdmin
-      ? [{ key: '/users', icon: <TeamOutlined />, label: 'Пользователи' }]
-      : []),
-  ];
+  // Auto-collapse on tablet
+  useEffect(() => {
+    if (isTablet) setCollapsed(true);
+    else if (!isMobile) setCollapsed(false);
+  }, [isTablet, isMobile]);
 
   const userMenu = [
     {
@@ -138,74 +184,103 @@ export default function AppLayout() {
     },
   ];
 
+  const headerHeight = 64;
+  const barHeight = showBar ? 36 : 0;
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider
-        collapsible
-        collapsed={collapsed}
-        trigger={null}
-        width={220}
-        style={{ background: 'linear-gradient(180deg, #1a1a2e 0%, #16213e 60%, #0f3460 100%)' }}
-      >
-        <div
-          style={{
-            height: 64,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '0 12px',
-            borderBottom: '1px solid rgba(255,255,255,0.08)',
-            overflow: 'hidden',
-          }}
+      {/* Desktop/Tablet sidebar */}
+      {!isMobile && (
+        <Sider
+          collapsible
+          collapsed={collapsed}
+          trigger={null}
+          width={220}
+          collapsedWidth={64}
+          style={SIDEBAR_STYLE}
         >
-          {collapsed ? (
-            <img src="/logo.png" alt="MRP" style={{ height: 44, width: 44, objectFit: 'contain' }} />
-          ) : (
-            <img src="/logo.png" alt="MRP Dashboard" style={{ height: 56, objectFit: 'contain', maxWidth: '100%' }} />
-          )}
-        </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          items={menuItems}
-          onClick={({ key }) => navigate(key)}
-          style={{ background: 'transparent', borderRight: 0, marginTop: 8 }}
-        />
-      </Sider>
+          <div
+            style={{
+              height: 64,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '0 12px',
+              borderBottom: '1px solid rgba(255,255,255,0.08)',
+              overflow: 'hidden',
+            }}
+          >
+            {collapsed ? (
+              <img src="/logo.png" alt="MRP" style={{ height: 44, width: 44, objectFit: 'contain' }} />
+            ) : (
+              <img src="/logo.png" alt="MRP Dashboard" style={{ height: 56, objectFit: 'contain', maxWidth: '100%' }} />
+            )}
+          </div>
+          <Menu
+            theme="dark"
+            mode="inline"
+            selectedKeys={[location.pathname]}
+            items={[
+              { key: '/dashboard', icon: <BarChartOutlined />, label: 'MRP Отчёт' },
+              ...(isSuperAdmin
+                ? [{ key: '/users', icon: <TeamOutlined />, label: 'Пользователи' }]
+                : []),
+            ]}
+            onClick={({ key }) => navigate(key)}
+            style={{ background: 'transparent', borderRight: 0, marginTop: 8 }}
+          />
+        </Sider>
+      )}
 
-      <Layout>
+      {/* Mobile drawer */}
+      {isMobile && (
+        <Drawer
+          placement="left"
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          width={220}
+          styles={{ body: { padding: 0, ...SIDEBAR_STYLE }, header: { display: 'none' } }}
+        >
+          <SidebarContent onClose={() => setDrawerOpen(false)} />
+        </Drawer>
+      )}
+
+      <Layout style={{ minWidth: 0 }}>
         <Header
           style={{
             background: '#fff',
-            padding: '0 24px',
+            padding: '0 16px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             borderBottom: '1px solid #f0f0f0',
-            height: 64,
+            height: headerHeight,
             flexShrink: 0,
             position: 'relative',
           }}
         >
           <div
-            style={{ cursor: 'pointer', fontSize: 18, color: '#666' }}
-            onClick={() => setCollapsed(!collapsed)}
+            style={{ cursor: 'pointer', fontSize: 18, color: '#666', flexShrink: 0 }}
+            onClick={() => isMobile ? setDrawerOpen(true) : setCollapsed(!collapsed)}
           >
-            {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            {(!isMobile && !collapsed) || isMobile
+              ? <MenuFoldOutlined />
+              : <MenuUnfoldOutlined />}
           </div>
 
-          <img
-            src="/logo.png"
-            alt="MRP Dashboard"
-            style={{
-              height: 40,
-              objectFit: 'contain',
-              position: 'absolute',
-              left: '50%',
-              transform: 'translateX(-50%)',
-            }}
-          />
+          {!isMobile && (
+            <img
+              src="/logo.png"
+              alt="MRP Dashboard"
+              style={{
+                height: 40,
+                objectFit: 'contain',
+                position: 'absolute',
+                left: '50%',
+                transform: 'translateX(-50%)',
+              }}
+            />
+          )}
 
           <Dropdown menu={{ items: userMenu }} placement="bottomRight" arrow>
             <Space style={{ cursor: 'pointer' }}>
@@ -215,15 +290,17 @@ export default function AppLayout() {
                 style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}
                 icon={!user?.avatar && <UserOutlined />}
               />
-              <div style={{ lineHeight: 1.3 }}>
-                <Text strong style={{ fontSize: 13, display: 'block' }}>{user?.name}</Text>
-                <Tag
-                  color={isSuperAdmin ? 'purple' : 'blue'}
-                  style={{ fontSize: 10, lineHeight: '16px', margin: 0 }}
-                >
-                  {isSuperAdmin ? 'Super Admin' : 'Client'}
-                </Tag>
-              </div>
+              {!isMobile && (
+                <div style={{ lineHeight: 1.3 }}>
+                  <Text strong style={{ fontSize: 13, display: 'block' }}>{user?.name}</Text>
+                  <Tag
+                    color={isSuperAdmin ? 'purple' : 'blue'}
+                    style={{ fontSize: 10, lineHeight: '16px', margin: 0 }}
+                  >
+                    {isSuperAdmin ? 'Super Admin' : 'Client'}
+                  </Tag>
+                </div>
+              )}
             </Space>
           </Dropdown>
         </Header>
@@ -233,8 +310,7 @@ export default function AppLayout() {
         <Content
           style={{
             background: '#f0f2f7',
-            minHeight: `calc(100vh - ${showBar ? 100 : 64}px)`,
-            transition: 'min-height 0.3s',
+            height: `calc(100vh - ${headerHeight + barHeight}px)`,
             overflow: 'auto',
           }}
         >
