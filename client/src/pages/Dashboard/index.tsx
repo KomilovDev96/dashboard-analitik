@@ -33,7 +33,7 @@ function LastUpdateBadge() {
       ? dayjs(data.lastUpdate).format('DD.MM.YYYY')
       : '—';
 
-  const subLabel = !isLoading && data && !isToday
+  const subLabel = !isLoading && data && !isToday && daysAgo > 0
     ? daysAgo === 1 ? 'вчера' : `${daysAgo} дн. назад`
     : null;
 

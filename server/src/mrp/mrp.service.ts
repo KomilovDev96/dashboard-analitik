@@ -101,8 +101,8 @@ export class MrpService {
 
     const rows = await this.clickhouse.query<{ lastUpdate: string; today: string }>(
       `SELECT
-         formatDateTime(max("Дата"), '%Y-%m-%d') AS lastUpdate,
-         formatDateTime(now(), '%Y-%m-%d')        AS today
+         formatDateTime(max("Дата"), '%Y-%m-%d', 'Asia/Tashkent') AS lastUpdate,
+         formatDateTime(now(),       '%Y-%m-%d', 'Asia/Tashkent') AS today
        FROM "ТоварыНаСкладах"`,
     );
 
