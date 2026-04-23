@@ -70,15 +70,15 @@ function LastUpdateBadge() {
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        background: isToday ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.08)',
-        border: `1px solid ${isToday ? 'rgba(34,197,94,0.4)' : 'rgba(255,255,255,0.15)'}`,
+        background: (isToday || daysAgo === 0) ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.08)',
+        border: `1px solid ${(isToday || daysAgo === 0) ? 'rgba(34,197,94,0.4)' : 'rgba(255,255,255,0.15)'}`,
         borderRadius: 20,
         padding: '6px 14px',
         flexShrink: 0,
       }}>
         {isLoading ? (
           <SyncOutlined spin style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12 }} />
-        ) : isToday ? (
+        ) : (isToday || daysAgo === 0) ? (
           <CheckCircleOutlined style={{ color: '#4ade80', fontSize: 13 }} />
         ) : (
           <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#f97316', flexShrink: 0 }} />
@@ -89,7 +89,7 @@ function LastUpdateBadge() {
           </Text>
           <Text style={{
             fontSize: 12, fontWeight: 700,
-            color: isLoading ? 'rgba(255,255,255,0.3)' : isToday ? '#4ade80' : '#fb923c',
+            color: isLoading ? 'rgba(255,255,255,0.3)' : (isToday || daysAgo === 0) ? '#4ade80' : '#fb923c',
             display: 'block', lineHeight: 1.3,
           }}>
             {isLoading ? 'загрузка...' : (isToday || daysAgo === 0) ? 'Сегодня обновился' : label}
