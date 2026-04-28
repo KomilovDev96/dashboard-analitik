@@ -261,6 +261,12 @@ export default function MrpDataTable() {
     }
   }, []);
 
+  const prevDataRef = useRef(data);
+  if (prevDataRef.current !== data) {
+    prevDataRef.current = data;
+    if (expandedKeys.length > 0) setExpandedKeys([]);
+  }
+
   const handleSearch = useCallback((val: string) => {
     startTransition(() => {
       setSearch(val);

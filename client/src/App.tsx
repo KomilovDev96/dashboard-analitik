@@ -1,12 +1,10 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConfigProvider, App as AntApp } from 'antd';
 import ruRU from 'antd/locale/ru_RU';
 import { useAuthStore } from './stores/authStore';
-import { useMrpStore } from './stores/mrpStore';
 import AppLayout from './components/Layout/AppLayout';
 import LoginPage from './pages/Login';
-import PreloadPage from './pages/Preload';
 import DashboardPage from './pages/Dashboard';
 import UsersPage from './pages/Users';
 import ProfilePage from './pages/Profile';
@@ -20,23 +18,13 @@ const queryClient = new QueryClient({
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const isPreloaded = useMrpStore((s) => s.isPreloaded);
-  const location = useLocation();
-
   if (!isAuthenticated) return <Navigate to="/login" replace />;
-  if (!isPreloaded && location.pathname !== '/preload') return <Navigate to="/preload" replace />;
   return <>{children}</>;
 }
 
 function RequireAdmin({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user);
   return user?.role === 'super_admin' ? <>{children}</> : <Navigate to="/dashboard" replace />;
-}
-
-// Отдельный компонент — реактивно подписывается на isAuthenticated
-function PreloadRoute() {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  return isAuthenticated ? <PreloadPage /> : <Navigate to="/login" replace />;
 }
 
 export default function App() {
@@ -56,8 +44,6 @@ export default function App() {
           <BrowserRouter>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
-
-              <Route path="/preload" element={<PreloadRoute />} />
 
               <Route
                 path="/"
