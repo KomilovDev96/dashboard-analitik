@@ -1,4 +1,4 @@
-import { useMemo, useTransition } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { Card, Row, Col, Select, DatePicker, Button, Space, Tooltip, Alert, App } from 'antd';
 import { SearchOutlined, ClearOutlined, SyncOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -10,38 +10,15 @@ import { useMrpStream } from '../../hooks/useMrpStream';
 const { RangePicker } = DatePicker;
 
 export default function MrpFilters() {
-  const filters              = useMrpStore((s) => s.filters);
-  const setFilters           = useMrpStore((s) => s.setFilters);
-  const resetFilters         = useMrpStore((s) => s.resetFilters);
-  const preloadedDate        = useMrpStore((s) => s.preloadedDate);
-  const applyFiltersOnPreloaded = useMrpStore((s) => s.applyFiltersOnPreloaded);
-  const isPreloaded          = useMrpStore((s) => s.isPreloaded);
-  const isStreaming          = useMrpStore((s) => s.stream.isStreaming);
-  const { start, stop }      = useMrpStream();
+  const filters     = useMrpStore((s) => s.filters);
+  const totalRows   = useMrpStore((s) => s.totalRows);
+  const isStreaming = useMrpStore((s) => s.stream.isStreaming);
+  const setFilters  = useMrpStore((s) => s.setFilters);
+  const resetFilters = useMrpStore((s) => s.resetFilters);
+  const { start, stop } = useMrpStream();
 
-  const [isPending, startTransition] = useTransition();
   const qc = useQueryClient();
   const { notification } = App.useApp();
-
-  const canUsePreloaded =
-    isPreloaded &&
-    preloadedDate &&
-    (!filters.dateTo || filters.dateTo === preloadedDate);
-
-  // Применяем фильтр: если данные в памяти — мгновенно через transition, иначе стрим
-  const applyFilters = (newFilters: typeof filters) => {
-    if (canUsePreloaded) {
-      startTransition(() => applyFiltersOnPreloaded(newFilters));
-    }
-  };
-
-  const handleLoad = () => {
-    if (canUsePreloaded) {
-      startTransition(() => applyFiltersOnPreloaded(filters));
-    } else {
-      start();
-    }
-  };
 
   // ── Данные фильтров из API ────────────────────────────────────────────────
   const { data: categories, isLoading: loadingCats, isError: catsError, error: catsErr } = useQuery({
@@ -65,7 +42,26 @@ export default function MrpFilters() {
     retry: 1,
   });
 
-  // useMemo — массивы options пересоздаются ТОЛЬКО когда меняются данные, не при каждом рендере
+  // ── Авто-старт при первом входе ───────────────────────────────────────────
+  const hasAutoStarted = useRef(false);
+
+  // Шаг 1: когда dateRange загрузился — ставим дефолтные даты
+  useEffect(() => {
+    if (!dateRange || hasAutoStarted.current || filters.dateTo) return;
+    setFilters({
+      dateFrom: `${new Date().getFullYear()}-01-01`,
+      dateTo: dateRange.max,
+    });
+  }, [dateRange]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Шаг 2: когда фильтры с датой готовы и данных ещё нет — авто-загрузка
+  useEffect(() => {
+    if (!filters.dateTo || totalRows > 0 || isStreaming || hasAutoStarted.current) return;
+    hasAutoStarted.current = true;
+    start();
+  }, [filters.dateTo, totalRows, isStreaming]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Options ───────────────────────────────────────────────────────────────
   const categoryOptions = useMemo(
     () => categories?.map((c) => ({ value: c, label: c })) ?? [],
     [categories],
@@ -85,29 +81,23 @@ export default function MrpFilters() {
     notification.info({ message: 'Повторная загрузка фильтров...', duration: 2 });
   };
 
+  const handleLoad = () => start();
+
   const handleDateChange = (dates: [dayjs.Dayjs | null, dayjs.Dayjs | null] | null) => {
-    const newFilters = dates?.[0] && dates?.[1]
-      ? { ...filters, dateFrom: dates[0].format('YYYY-MM-DD'), dateTo: dates[1].format('YYYY-MM-DD') }
-      : { ...filters, dateFrom: undefined, dateTo: undefined };
-    setFilters(newFilters);
-    // Дата меняет запрос — нельзя применять на preloaded (разные даты), нужен серверный запрос
+    setFilters(
+      dates?.[0] && dates?.[1]
+        ? { dateFrom: dates[0].format('YYYY-MM-DD'), dateTo: dates[1].format('YYYY-MM-DD') }
+        : { dateFrom: undefined, dateTo: undefined },
+    );
   };
 
-  const handleCategoryChange = (v: string[]) => {
-    const newFilters = { ...filters, categories: v };
-    setFilters({ categories: v });
-    applyFilters(newFilters);
-  };
-
-  const handleWarehouseChange = (v: string[]) => {
-    const newFilters = { ...filters, warehouses: v };
-    setFilters({ warehouses: v });
-    applyFilters(newFilters);
-  };
+  const handleCategoryChange = (v: string[]) => setFilters({ categories: v });
+  const handleWarehouseChange = (v: string[]) => setFilters({ warehouses: v });
 
   const handleReset = () => {
-    resetFilters();
     stop();
+    resetFilters();
+    hasAutoStarted.current = false;
   };
 
   return (
@@ -144,7 +134,7 @@ export default function MrpFilters() {
             mode="multiple"
             style={{ width: '100%' }}
             placeholder={loadingCats ? 'Загрузка...' : `Категория (${categories?.length ?? 0})`}
-            loading={loadingCats || isPending}
+            loading={loadingCats}
             value={filters.categories ?? []}
             onChange={handleCategoryChange}
             options={categoryOptions}
@@ -162,7 +152,7 @@ export default function MrpFilters() {
             mode="multiple"
             style={{ width: '100%' }}
             placeholder={loadingWarehouses ? 'Загрузка...' : `Склад (${warehouses?.length ?? 0})`}
-            loading={loadingWarehouses || isPending}
+            loading={loadingWarehouses}
             value={filters.warehouses ?? []}
             onChange={handleWarehouseChange}
             options={warehouseOptions}
@@ -181,7 +171,7 @@ export default function MrpFilters() {
               type="primary"
               icon={<SearchOutlined />}
               onClick={handleLoad}
-              loading={isStreaming || isPending}
+              loading={isStreaming}
               style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', border: 'none', borderRadius: 8 }}
             >
               Загрузить

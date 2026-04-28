@@ -36,6 +36,7 @@ export interface MrpRow {
   balance_date?: string;
   in_transit: number;
   zakazano: number;
+  avg_daily_sales?: number;
 }
 
 export interface MrpReport {
