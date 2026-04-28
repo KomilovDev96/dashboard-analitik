@@ -12,6 +12,20 @@ const CACHE_TTL = {
 // Подзапрос: Заказано = A - B
 // A = сумма Количество из УникальнаяЗаказПоставщику_Товары (с дедупликацией по uuid+Номенклатура_Key)
 // B = сумма quantity из purchases, у которых purchase_order+product_id есть в УникальнаяЗаказПоставщику
+// Средние продажи в день за последние 6 месяцев (с первого числа 6 мес. назад)
+const AVG_SALES_SUBQUERY = `
+  SELECT
+    product_id,
+    sum(quantity) / dateDiff('day',
+      toStartOfMonth(toDate(now()) - INTERVAL 6 MONTH),
+      toDate(now())
+    ) AS avg_daily_sales
+  FROM sales_analysis
+  WHERE sale_date >= toStartOfMonth(toDate(now()) - INTERVAL 6 MONTH)
+    AND quantity > 0
+  GROUP BY product_id
+`;
+
 const ZAKAZANO_SUBQUERY = `
   SELECT
     z."Номенклатура_Key",
@@ -192,7 +206,8 @@ export class MrpService {
           argMax(t."КонечныйОстаток", t."Дата")          AS balance,
           formatDateTime(max(t."Дата"), '%d.%m.%Y')       AS balance_date,
           any(coalesce(pit.in_transit, 0))                AS in_transit,
-          any(coalesce(zk.zakazano, 0))                   AS zakazano
+          any(coalesce(zk.zakazano, 0))                   AS zakazano,
+          any(coalesce(avgs.avg_daily_sales, 0))          AS avg_daily_sales
         FROM "ТоварыНаСкладах" t
         INNER JOIN "Номенклатура" n      ON t."Номенклатура_Key"    = n.uuid
         INNER JOIN products_hierarchy ph ON n."ВидНоменклатуры_Key" = ph.uuid
@@ -206,6 +221,7 @@ export class MrpService {
           GROUP BY product_id
         ) pit ON t."Номенклатура_Key" = pit.product_id
         LEFT JOIN (${ZAKAZANO_SUBQUERY}) zk ON t."Номенклатура_Key" = zk."Номенклатура_Key"
+        LEFT JOIN (${AVG_SALES_SUBQUERY}) avgs ON t."Номенклатура_Key" = avgs.product_id
         GROUP BY
           n."Наименование", ph."Уровень_1", ph."Уровень_2",
           ph."Уровень_3", ph."Уровень_4", s."Наименование"
@@ -342,7 +358,8 @@ export class MrpService {
         argMax(t."КонечныйОстаток", t."Дата")          AS balance,
         formatDateTime(max(t."Дата"), '%d.%m.%Y')       AS balance_date,
         any(coalesce(pit.in_transit, 0))                AS in_transit,
-        any(coalesce(zk.zakazano, 0))                   AS zakazano
+        any(coalesce(zk.zakazano, 0))                   AS zakazano,
+        any(coalesce(avgs.avg_daily_sales, 0))          AS avg_daily_sales
       FROM "ТоварыНаСкладах" t
       INNER JOIN "Номенклатура" n      ON t."Номенклатура_Key"    = n.uuid
       INNER JOIN products_hierarchy ph ON n."ВидНоменклатуры_Key" = ph.uuid
@@ -356,6 +373,7 @@ export class MrpService {
         GROUP BY product_id
       ) pit ON t."Номенклатура_Key" = pit.product_id
       LEFT JOIN (${ZAKAZANO_SUBQUERY}) zk ON t."Номенклатура_Key" = zk."Номенклатура_Key"
+      LEFT JOIN (${AVG_SALES_SUBQUERY}) avgs ON t."Номенклатура_Key" = avgs.product_id
       ${where}
       GROUP BY
         t."Номенклатура_Key", t."Склад_Key",
@@ -377,4 +395,5 @@ export interface MrpRow {
   balance: number;
   in_transit: number;
   zakazano: number;
+  avg_daily_sales: number;
 }

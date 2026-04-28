@@ -25,6 +25,7 @@ interface LevelRow {
   balance: number;
   in_transit: number;
   zakazano: number;
+  avg_daily_sales: number;
   itemCount: number;
   children: TreeRow[];
 }
@@ -35,6 +36,7 @@ interface ProductRow {
   balance: number;
   in_transit: number;
   zakazano: number;
+  avg_daily_sales: number;
   itemCount: number;
   children: WarehouseRow[];
 }
@@ -98,9 +100,10 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
 
   for (const r of rows) {
     const path = getPath(r);
-    const inTransit = Number(r.in_transit ?? 0);
-    const zakazano  = Number(r.zakazano  ?? 0);
-    const isFirst   = !seenPerProduct.has(r.product_name);
+    const inTransit     = Number(r.in_transit ?? 0);
+    const zakazano      = Number(r.zakazano   ?? 0);
+    const avgDailySales = Number(r.avg_daily_sales ?? 0);
+    const isFirst       = !seenPerProduct.has(r.product_name);
     if (isFirst) seenPerProduct.add(r.product_name);
 
     let cur = root;
@@ -112,15 +115,16 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
       if (!cur.has(curKey)) {
         const node: LevelRow = {
           key: curKey, rowType: 'level', depth: i, label: seg,
-          balance: 0, in_transit: 0, zakazano: 0, itemCount: 0, children: [],
+          balance: 0, in_transit: 0, zakazano: 0, avg_daily_sales: 0, itemCount: 0, children: [],
         };
         cur.set(curKey, { row: node, children: new Map() });
       }
       const entry = cur.get(curKey)!;
       (entry.row as LevelRow).balance += Number(r.balance);
       if (isFirst) {
-        (entry.row as LevelRow).in_transit += inTransit;
-        (entry.row as LevelRow).zakazano  += zakazano;
+        (entry.row as LevelRow).in_transit      += inTransit;
+        (entry.row as LevelRow).zakazano        += zakazano;
+        (entry.row as LevelRow).avg_daily_sales += avgDailySales;
       }
       (entry.row as LevelRow).itemCount += 1;
       cur = entry.children;
@@ -130,12 +134,13 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
     if (!cur.has(prodKey)) {
       const node: ProductRow = {
         key: prodKey, rowType: 'product', label: r.product_name,
-        balance: 0, in_transit: inTransit, zakazano, itemCount: 0, children: [],
+        balance: 0, in_transit: inTransit, zakazano, avg_daily_sales: 0, itemCount: 0, children: [],
       };
       cur.set(prodKey, { row: node, children: new Map() });
     }
     const prodEntry = cur.get(prodKey)!;
     (prodEntry.row as ProductRow).balance += Number(r.balance);
+    if (isFirst) (prodEntry.row as ProductRow).avg_daily_sales = avgDailySales;
     (prodEntry.row as ProductRow).itemCount += 1;
 
     // Warehouse node (leaf)
@@ -437,6 +442,31 @@ export default function MrpDataTable() {
             borderRadius: 8, padding: '3px 12px', minWidth: 64,
           }}>
             <Text strong style={{ color: '#3b82f6', fontSize: isLevel ? 14 : 13 }}>
+              {n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
+            </Text>
+          </div>
+        );
+      },
+    },
+    {
+      title: 'Ср. продажи/день',
+      dataIndex: 'avg_daily_sales',
+      width: colWidth,
+      align: 'right',
+      sorter: (a, b) => Number((a as LevelRow | ProductRow).avg_daily_sales ?? 0) - Number((b as LevelRow | ProductRow).avg_daily_sales ?? 0),
+      render: (_val: number, record) => {
+        if (record.rowType === 'warehouse') return null;
+        const n = Number((record as LevelRow | ProductRow).avg_daily_sales ?? 0);
+        if (n <= 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+        const isLevel = record.rowType === 'level';
+        return (
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            background: isLevel ? '#f5f3ff' : '#ede9fe',
+            border: isLevel ? '1px solid #8b5cf630' : 'none',
+            borderRadius: 8, padding: '3px 12px', minWidth: 64,
+          }}>
+            <Text strong style={{ color: '#8b5cf6', fontSize: isLevel ? 14 : 13 }}>
               {n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
             </Text>
           </div>
