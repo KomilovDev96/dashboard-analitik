@@ -60,6 +60,9 @@ export const mrpApi = {
     return () => source.close();
   },
 
+  getProductMonthlySales: (productId: string) =>
+    api.get<ApiResponse<{ month: string; sales: number }[]>>(`/mrp/monthly-sales?productId=${productId}`),
+
   streamReport: (
     filters: MrpFilters,
     onProgress: (event: SseProgressEvent) => void,

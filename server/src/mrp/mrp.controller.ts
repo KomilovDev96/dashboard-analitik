@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Res, UseGuards, BadRequestException } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { MrpService } from './mrp.service';
@@ -52,5 +52,12 @@ export class MrpController {
   @ApiOperation({ summary: 'Stream MRP report with SSE progress (100%)' })
   streamReport(@Query() filters: MrpFilterDto, @Res() res: Response) {
     return this.mrpService.streamReport(filters, res);
+  }
+
+  @Get('monthly-sales')
+  @ApiOperation({ summary: 'Monthly sales breakdown for a product (last 6 months)' })
+  getProductMonthlySales(@Query('productId') productId: string) {
+    if (!productId) throw new BadRequestException('productId is required');
+    return this.mrpService.getProductMonthlySales(productId);
   }
 }

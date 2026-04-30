@@ -34,9 +34,12 @@ const AVG_SALES_SUBQUERY = `
 const ZAKAZANO_SUBQUERY = `
   SELECT
     z."Номенклатура_Key",
-    sum(z."Количество") - coalesce(sum(p.qty), 0) AS zakazano
+    sum(z."Количество") - coalesce(sum(p.qty), 0) AS zakazano,
+    formatDateTime(min(z.min_date), '%d.%m.%Y %H:%M') AS zakazano_date_min,
+    formatDateTime(max(z.max_date), '%d.%m.%Y %H:%M') AS zakazano_date_max
   FROM (
-    SELECT uuid, "Номенклатура_Key", sum("Количество") AS "Количество"
+    SELECT uuid, "Номенклатура_Key", sum("Количество") AS "Количество",
+           min("Дата") AS min_date, max("Дата") AS max_date
     FROM "ЗаказПоставщику_Товары"
     WHERE "Отменено" = false
     GROUP BY uuid, "Номенклатура_Key"
@@ -211,16 +214,23 @@ export class MrpService {
           argMax(t."КонечныйОстаток", t."Дата")          AS balance,
           formatDateTime(max(t."Дата"), '%d.%m.%Y')       AS balance_date,
           any(coalesce(pit.in_transit, 0))                AS in_transit,
+          any(coalesce(pit.in_transit_date_min, ''))      AS in_transit_date_min,
+          any(coalesce(pit.in_transit_date_max, ''))      AS in_transit_date_max,
           any(coalesce(zk.zakazano, 0))                   AS zakazano,
+          any(coalesce(zk.zakazano_date_min, ''))         AS zakazano_date_min,
+          any(coalesce(zk.zakazano_date_max, ''))         AS zakazano_date_max,
           any(coalesce(avgs.avg_daily_sales, 0))          AS avg_daily_sales,
           any(coalesce(avgs.total_sales_6m, 0))           AS total_sales_6m,
-          any(coalesce(avgs.days_count, 0))               AS days_count
+          any(toString(t."Номенклатура_Key"))              AS product_id
         FROM "ТоварыНаСкладах" t
         INNER JOIN "Номенклатура" n      ON t."Номенклатура_Key"    = n.uuid
         INNER JOIN products_hierarchy ph ON n."ВидНоменклатуры_Key" = ph.uuid
         INNER JOIN "Склады" s            ON t."Склад_Key"           = s.uuid
         LEFT JOIN (
-          SELECT product_id, sum(quantity) AS in_transit
+          SELECT product_id,
+            sum(quantity)                                   AS in_transit,
+            formatDateTime(min(date), '%d.%m.%Y')           AS in_transit_date_min,
+            formatDateTime(max(date), '%d.%m.%Y')           AS in_transit_date_max
           FROM purchases
           WHERE "Регистратор_Key" NOT IN (
             SELECT DISTINCT "Распоряжение_Key" FROM "ПоступлениеТоваров_Товары"
@@ -324,6 +334,34 @@ export class MrpService {
     }
   }
 
+  // ─── Monthly sales per product ────────────────────────────────────────────
+
+  async getProductMonthlySales(productId: string): Promise<{ month: string; sales: number }[]> {
+    const uuidRegex = /^[0-9a-f-]{36}$/i;
+    if (!uuidRegex.test(productId)) return [];
+
+    const cacheKey = `mrp:monthly:${productId}`;
+    const cached = await this.cache.get<{ month: string; sales: number }[]>(cacheKey);
+    if (cached) return cached;
+
+    const rows = await this.clickhouse.query<{ month: string; sales: string }>(
+      `SELECT
+         formatDateTime(toStartOfMonth(sale_date), '%Y-%m') AS month,
+         sum(quantity) AS sales
+       FROM sales_analysis
+       WHERE product_id = '${productId}'
+         AND sale_date >= toStartOfMonth(toDate(now()) - INTERVAL 6 MONTH)
+         AND quantity > 0
+       GROUP BY month
+       HAVING sales > 0
+       ORDER BY month`,
+    );
+
+    const result = rows.map((r) => ({ month: r.month, sales: Number(r.sales) }));
+    await this.cache.set(cacheKey, result, CACHE_TTL.FILTERS);
+    return result;
+  }
+
   // ─── SQL builder ───────────────────────────────────────────────────────────
 
   private buildSql(filters: MrpFilterDto): { sql: string; countSql: string } {
@@ -365,16 +403,23 @@ export class MrpService {
         argMax(t."КонечныйОстаток", t."Дата")          AS balance,
         formatDateTime(max(t."Дата"), '%d.%m.%Y')       AS balance_date,
         any(coalesce(pit.in_transit, 0))                AS in_transit,
+        any(coalesce(pit.in_transit_date_min, ''))      AS in_transit_date_min,
+        any(coalesce(pit.in_transit_date_max, ''))      AS in_transit_date_max,
         any(coalesce(zk.zakazano, 0))                   AS zakazano,
+        any(coalesce(zk.zakazano_date_min, ''))         AS zakazano_date_min,
+        any(coalesce(zk.zakazano_date_max, ''))         AS zakazano_date_max,
         any(coalesce(avgs.avg_daily_sales, 0))          AS avg_daily_sales,
         any(coalesce(avgs.total_sales_6m, 0))           AS total_sales_6m,
-        any(coalesce(avgs.days_count, 0))               AS days_count
+        toString(t."Номенклатура_Key")                  AS product_id
       FROM "ТоварыНаСкладах" t
       INNER JOIN "Номенклатура" n      ON t."Номенклатура_Key"    = n.uuid
       INNER JOIN products_hierarchy ph ON n."ВидНоменклатуры_Key" = ph.uuid
       INNER JOIN "Склады" s            ON t."Склад_Key"           = s.uuid
       LEFT JOIN (
-        SELECT product_id, sum(quantity) AS in_transit
+        SELECT product_id,
+          sum(quantity)                                   AS in_transit,
+          formatDateTime(min(date), '%d.%m.%Y %H:%M')     AS in_transit_date_min,
+          formatDateTime(max(date), '%d.%m.%Y %H:%M')     AS in_transit_date_max
         FROM purchases
         WHERE "Регистратор_Key" NOT IN (
           SELECT DISTINCT "Распоряжение_Key" FROM "ПоступлениеТоваров_Товары"
@@ -403,8 +448,12 @@ export interface MrpRow {
   warehouse: string;
   balance: number;
   in_transit: number;
+  in_transit_date_min: string;
+  in_transit_date_max: string;
   zakazano: number;
+  zakazano_date_min: string;
+  zakazano_date_max: string;
   avg_daily_sales: number;
   total_sales_6m: number;
-  days_count: number;
+  product_id: string;
 }

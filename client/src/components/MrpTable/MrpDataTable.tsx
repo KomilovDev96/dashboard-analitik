@@ -1,15 +1,16 @@
 import { useMemo, useState, useTransition, useRef, useEffect, useCallback } from 'react';
-import { Table, Typography, Input, Empty, Row, Col, Skeleton, Button, Tooltip, Grid } from 'antd';
+import { Table, Typography, Input, Empty, Row, Col, Skeleton, Button, Tooltip, Grid, Popover, Spin } from 'antd';
 const { useBreakpoint } = Grid;
 import type { ColumnsType } from 'antd/es/table';
 import {
   SearchOutlined, DatabaseOutlined, ShopOutlined,
   AppstoreOutlined, MinusSquareOutlined, PlusSquareOutlined,
   FolderOutlined, FolderOpenOutlined, TagOutlined, LoadingOutlined,
-  FullscreenOutlined, FullscreenExitOutlined,
+  FullscreenOutlined, FullscreenExitOutlined, BarChartOutlined,
 } from '@ant-design/icons';
 import { useMrpStore } from '../../stores/mrpStore';
 import type { MrpRow } from '../../types';
+import { mrpApi } from '../../api/mrp';
 
 const { Text } = Typography;
 
@@ -27,7 +28,6 @@ interface LevelRow {
   zakazano: number;
   avg_daily_sales: number;
   total_sales_6m: number;
-  days_count: number;
   itemCount: number;
   children: TreeRow[];
 }
@@ -37,10 +37,14 @@ interface ProductRow {
   label: string;
   balance: number;
   in_transit: number;
+  in_transit_date_min: string;
+  in_transit_date_max: string;
   zakazano: number;
+  zakazano_date_min: string;
+  zakazano_date_max: string;
   avg_daily_sales: number;
   total_sales_6m: number;
-  days_count: number;
+  product_id: string;
   itemCount: number;
   children: WarehouseRow[];
 }
@@ -82,6 +86,111 @@ function StatCard({ title, value, icon, color }: {
   );
 }
 
+// ─── Monthly sales popover ────────────────────────────────────────────────────
+const MONTHS_RU = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+const fmtMonth = (ym: string) => {
+  const [y, m] = ym.split('-');
+  return `${MONTHS_RU[parseInt(m) - 1]} ${y}`;
+};
+const fmtDateRange = (min: string, max: string): string | null => {
+  if (!min && !max) return null;
+  if (!min || !max || min === max) return min || max;
+  return `${min} — ${max}`;
+};
+
+function MonthlySalesPopover({ productId }: { productId: string }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState<{ month: string; sales: number }[]>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener('scroll', close, true);
+    return () => window.removeEventListener('scroll', close, true);
+  }, [open]);
+
+  const handleOpenChange = async (next: boolean) => {
+    setOpen(next);
+    if (next && rows.length === 0 && productId) {
+      setLoading(true);
+      try {
+        const res = await mrpApi.getProductMonthlySales(productId);
+        setRows(res.data.data ?? []);
+      } catch { /* ignore */ } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  const total = rows.reduce((s, r) => s + r.sales, 0);
+
+  const content = (
+    <div style={{ minWidth: 200 }}>
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '16px 0' }}><Spin size="small" /></div>
+      ) : rows.length === 0 ? (
+        <Text type="secondary" style={{ fontSize: 12 }}>Нет данных</Text>
+      ) : (
+        <Table<{ month: string; sales: number }>
+          size="small"
+          pagination={false}
+          dataSource={rows}
+          rowKey="month"
+          summary={() => (
+            <Table.Summary.Row>
+              <Table.Summary.Cell index={0}>
+                <Text strong style={{ fontSize: 12 }}>Итого</Text>
+              </Table.Summary.Cell>
+              <Table.Summary.Cell index={1} align="right">
+                <Text strong style={{ color: '#16a34a', fontSize: 12 }}>
+                  {total.toLocaleString('ru-RU')}
+                </Text>
+              </Table.Summary.Cell>
+            </Table.Summary.Row>
+          )}
+          columns={[
+            {
+              title: 'Месяц',
+              dataIndex: 'month',
+              render: (v: string) => <Text style={{ fontSize: 12 }}>{fmtMonth(v)}</Text>,
+            },
+            {
+              title: 'Продажи',
+              dataIndex: 'sales',
+              align: 'right',
+              render: (v: number) => (
+                <Text strong style={{ color: '#16a34a', fontSize: 12 }}>
+                  {v.toLocaleString('ru-RU')}
+                </Text>
+              ),
+            },
+          ]}
+        />
+      )}
+    </div>
+  );
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={handleOpenChange}
+      trigger="click"
+      title={<span style={{ fontSize: 13 }}><BarChartOutlined style={{ marginRight: 6, color: '#16a34a' }} />Продажи по месяцам</span>}
+      content={content}
+      placement="left"
+    >
+      <Button
+        size="small"
+        type="text"
+        icon={<BarChartOutlined />}
+        style={{ color: '#16a34a', padding: '0 4px', height: 22, fontSize: 12 }}
+        disabled={!productId}
+      />
+    </Popover>
+  );
+}
+
 // ─── Build tree from flat MrpRow[] ───────────────────────────────────────────
 function buildTree(rows: MrpRow[]): LevelRow[] {
   // path per row: [l1, l2?, l3?, l4?] — deduplicate adjacent equal levels
@@ -104,12 +213,16 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
 
   for (const r of rows) {
     const path = getPath(r);
-    const inTransit     = Number(r.in_transit ?? 0);
-    const zakazano      = Number(r.zakazano   ?? 0);
-    const avgDailySales = Number(r.avg_daily_sales ?? 0);
-    const totalSales6m  = Number(r.total_sales_6m ?? 0);
-    const daysCount     = Number(r.days_count ?? 0);
-    const isFirst       = !seenPerProduct.has(r.product_name);
+    const inTransit        = Number(r.in_transit ?? 0);
+    const inTransitDateMin = r.in_transit_date_min ?? '';
+    const inTransitDateMax = r.in_transit_date_max ?? '';
+    const zakazano         = Number(r.zakazano   ?? 0);
+    const zakazanoDateMin  = r.zakazano_date_min ?? '';
+    const zakazanoDateMax  = r.zakazano_date_max ?? '';
+    const avgDailySales    = Number(r.avg_daily_sales ?? 0);
+    const totalSales6m     = Number(r.total_sales_6m ?? 0);
+    const productId        = r.product_id ?? '';
+    const isFirst          = !seenPerProduct.has(r.product_name);
     if (isFirst) seenPerProduct.add(r.product_name);
 
     let cur = root;
@@ -122,7 +235,7 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
         const node: LevelRow = {
           key: curKey, rowType: 'level', depth: i, label: seg,
           balance: 0, in_transit: 0, zakazano: 0, avg_daily_sales: 0,
-          total_sales_6m: 0, days_count: daysCount, itemCount: 0, children: [],
+          total_sales_6m: 0, itemCount: 0, children: [],
         };
         cur.set(curKey, { row: node, children: new Map() });
       }
@@ -133,9 +246,6 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
         (entry.row as LevelRow).zakazano        += zakazano;
         (entry.row as LevelRow).avg_daily_sales += avgDailySales;
         (entry.row as LevelRow).total_sales_6m  += totalSales6m;
-        if (daysCount > 0 && (entry.row as LevelRow).days_count === 0) {
-          (entry.row as LevelRow).days_count = daysCount;
-        }
       }
       (entry.row as LevelRow).itemCount += 1;
       cur = entry.children;
@@ -145,17 +255,23 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
     if (!cur.has(prodKey)) {
       const node: ProductRow = {
         key: prodKey, rowType: 'product', label: r.product_name,
-        balance: 0, in_transit: inTransit, zakazano,
-        avg_daily_sales: 0, total_sales_6m: 0, days_count: 0, itemCount: 0, children: [],
+        balance: 0, in_transit: inTransit,
+        in_transit_date_min: inTransitDateMin, in_transit_date_max: inTransitDateMax,
+        zakazano, zakazano_date_min: zakazanoDateMin, zakazano_date_max: zakazanoDateMax,
+        avg_daily_sales: 0, total_sales_6m: 0, product_id: productId, itemCount: 0, children: [],
       };
       cur.set(prodKey, { row: node, children: new Map() });
     }
     const prodEntry = cur.get(prodKey)!;
     (prodEntry.row as ProductRow).balance += Number(r.balance);
     if (isFirst) {
-      (prodEntry.row as ProductRow).avg_daily_sales = avgDailySales;
-      (prodEntry.row as ProductRow).total_sales_6m  = totalSales6m;
-      if (daysCount > 0) (prodEntry.row as ProductRow).days_count = daysCount;
+      (prodEntry.row as ProductRow).avg_daily_sales    = avgDailySales;
+      (prodEntry.row as ProductRow).total_sales_6m     = totalSales6m;
+      (prodEntry.row as ProductRow).product_id         = productId;
+      (prodEntry.row as ProductRow).in_transit_date_min = inTransitDateMin;
+      (prodEntry.row as ProductRow).in_transit_date_max = inTransitDateMax;
+      (prodEntry.row as ProductRow).zakazano_date_min   = zakazanoDateMin;
+      (prodEntry.row as ProductRow).zakazano_date_max   = zakazanoDateMax;
     }
     (prodEntry.row as ProductRow).itemCount += 1;
 
@@ -255,7 +371,7 @@ export default function MrpDataTable() {
   const totalRows = useMrpStore((s) => s.totalRows);
   const stream = useMrpStore((s) => s.stream);
   const [search, setSearch] = useState('');
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
 
   const colWidth = screens.xl ? 160 : screens.lg ? 140 : 120;
@@ -431,16 +547,21 @@ export default function MrpDataTable() {
         const n = Number(record.in_transit ?? 0);
         if (n === 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
         const isLevel = record.rowType === 'level';
+        const prod = record.rowType === 'product' ? record as ProductRow : null;
+        const dateRange = prod ? fmtDateRange(prod.in_transit_date_min, prod.in_transit_date_max) : null;
         return (
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            background: isLevel ? '#fef3c715' : '#fef3c725',
-            border: isLevel ? '1px solid #f59e0b30' : 'none',
-            borderRadius: 8, padding: '3px 12px', minWidth: 64,
-          }}>
-            <Text strong style={{ color: '#f59e0b', fontSize: isLevel ? 14 : 13 }}>
-              {n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
-            </Text>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              background: isLevel ? '#fef3c715' : '#fef3c725',
+              border: isLevel ? '1px solid #f59e0b30' : 'none',
+              borderRadius: 8, padding: '3px 12px', minWidth: 64,
+            }}>
+              <Text strong style={{ color: '#f59e0b', fontSize: isLevel ? 14 : 13 }}>
+                {n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
+              </Text>
+            </div>
+            {dateRange && <Text type="secondary" style={{ fontSize: 10 }}>{dateRange}</Text>}
           </div>
         );
       },
@@ -456,16 +577,21 @@ export default function MrpDataTable() {
         const n = Number(record.zakazano ?? 0);
         if (n <= 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
         const isLevel = record.rowType === 'level';
+        const prod = record.rowType === 'product' ? record as ProductRow : null;
+        const dateRange = prod ? fmtDateRange(prod.zakazano_date_min, prod.zakazano_date_max) : null;
         return (
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            background: isLevel ? '#eff6ff' : '#dbeafe',
-            border: isLevel ? '1px solid #3b82f630' : 'none',
-            borderRadius: 8, padding: '3px 12px', minWidth: 64,
-          }}>
-            <Text strong style={{ color: '#3b82f6', fontSize: isLevel ? 14 : 13 }}>
-              {n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
-            </Text>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              background: isLevel ? '#eff6ff' : '#dbeafe',
+              border: isLevel ? '1px solid #3b82f630' : 'none',
+              borderRadius: 8, padding: '3px 12px', minWidth: 64,
+            }}>
+              <Text strong style={{ color: '#3b82f6', fontSize: isLevel ? 14 : 13 }}>
+                {n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
+              </Text>
+            </div>
+            {dateRange && <Text type="secondary" style={{ fontSize: 10 }}>{dateRange}</Text>}
           </div>
         );
       },
@@ -504,9 +630,8 @@ export default function MrpDataTable() {
       render: (_val: number, record) => {
         if (record.rowType === 'warehouse') return null;
         const n = Number((record as LevelRow | ProductRow).total_sales_6m ?? 0);
-        if (n <= 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
         const isLevel = record.rowType === 'level';
-        return (
+        const badge = n > 0 ? (
           <div style={{
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
             background: isLevel ? '#f0fdf4' : '#dcfce7',
@@ -517,22 +642,14 @@ export default function MrpDataTable() {
               {n.toLocaleString('ru-RU', { maximumFractionDigits: 0 })}
             </Text>
           </div>
-        );
-      },
-    },
-    {
-      title: 'Кол-во дней',
-      dataIndex: 'days_count',
-      width: 110,
-      align: 'right',
-      render: (_val: number, record) => {
-        if (record.rowType === 'warehouse') return null;
-        const n = Number((record as LevelRow | ProductRow).days_count ?? 0);
-        if (n <= 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+        ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+
+        if (record.rowType !== 'product' || n <= 0) return badge;
         return (
-          <Text style={{ color: '#6b7280', fontSize: 12 }}>
-            {n} д.
-          </Text>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            {badge}
+            <MonthlySalesPopover productId={(record as ProductRow).product_id} />
+          </div>
         );
       },
     },
