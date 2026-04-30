@@ -37,6 +37,8 @@ export interface MrpRow {
   in_transit: number;
   zakazano: number;
   avg_daily_sales?: number;
+  total_sales_6m?: number;
+  days_count?: number;
 }
 
 export interface MrpReport {

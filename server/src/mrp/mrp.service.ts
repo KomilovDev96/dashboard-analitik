@@ -16,6 +16,11 @@ const CACHE_TTL = {
 const AVG_SALES_SUBQUERY = `
   SELECT
     product_id,
+    sum(quantity) AS total_sales_6m,
+    dateDiff('day',
+      toStartOfMonth(toDate(now()) - INTERVAL 6 MONTH),
+      toDate(now())
+    ) AS days_count,
     sum(quantity) / dateDiff('day',
       toStartOfMonth(toDate(now()) - INTERVAL 6 MONTH),
       toDate(now())
@@ -207,7 +212,9 @@ export class MrpService {
           formatDateTime(max(t."Дата"), '%d.%m.%Y')       AS balance_date,
           any(coalesce(pit.in_transit, 0))                AS in_transit,
           any(coalesce(zk.zakazano, 0))                   AS zakazano,
-          any(coalesce(avgs.avg_daily_sales, 0))          AS avg_daily_sales
+          any(coalesce(avgs.avg_daily_sales, 0))          AS avg_daily_sales,
+          any(coalesce(avgs.total_sales_6m, 0))           AS total_sales_6m,
+          any(coalesce(avgs.days_count, 0))               AS days_count
         FROM "ТоварыНаСкладах" t
         INNER JOIN "Номенклатура" n      ON t."Номенклатура_Key"    = n.uuid
         INNER JOIN products_hierarchy ph ON n."ВидНоменклатуры_Key" = ph.uuid
@@ -359,7 +366,9 @@ export class MrpService {
         formatDateTime(max(t."Дата"), '%d.%m.%Y')       AS balance_date,
         any(coalesce(pit.in_transit, 0))                AS in_transit,
         any(coalesce(zk.zakazano, 0))                   AS zakazano,
-        any(coalesce(avgs.avg_daily_sales, 0))          AS avg_daily_sales
+        any(coalesce(avgs.avg_daily_sales, 0))          AS avg_daily_sales,
+        any(coalesce(avgs.total_sales_6m, 0))           AS total_sales_6m,
+        any(coalesce(avgs.days_count, 0))               AS days_count
       FROM "ТоварыНаСкладах" t
       INNER JOIN "Номенклатура" n      ON t."Номенклатура_Key"    = n.uuid
       INNER JOIN products_hierarchy ph ON n."ВидНоменклатуры_Key" = ph.uuid
@@ -396,4 +405,6 @@ export interface MrpRow {
   in_transit: number;
   zakazano: number;
   avg_daily_sales: number;
+  total_sales_6m: number;
+  days_count: number;
 }

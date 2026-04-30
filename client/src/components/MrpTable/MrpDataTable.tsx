@@ -26,6 +26,8 @@ interface LevelRow {
   in_transit: number;
   zakazano: number;
   avg_daily_sales: number;
+  total_sales_6m: number;
+  days_count: number;
   itemCount: number;
   children: TreeRow[];
 }
@@ -37,6 +39,8 @@ interface ProductRow {
   in_transit: number;
   zakazano: number;
   avg_daily_sales: number;
+  total_sales_6m: number;
+  days_count: number;
   itemCount: number;
   children: WarehouseRow[];
 }
@@ -103,6 +107,8 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
     const inTransit     = Number(r.in_transit ?? 0);
     const zakazano      = Number(r.zakazano   ?? 0);
     const avgDailySales = Number(r.avg_daily_sales ?? 0);
+    const totalSales6m  = Number(r.total_sales_6m ?? 0);
+    const daysCount     = Number(r.days_count ?? 0);
     const isFirst       = !seenPerProduct.has(r.product_name);
     if (isFirst) seenPerProduct.add(r.product_name);
 
@@ -115,7 +121,8 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
       if (!cur.has(curKey)) {
         const node: LevelRow = {
           key: curKey, rowType: 'level', depth: i, label: seg,
-          balance: 0, in_transit: 0, zakazano: 0, avg_daily_sales: 0, itemCount: 0, children: [],
+          balance: 0, in_transit: 0, zakazano: 0, avg_daily_sales: 0,
+          total_sales_6m: 0, days_count: daysCount, itemCount: 0, children: [],
         };
         cur.set(curKey, { row: node, children: new Map() });
       }
@@ -125,6 +132,10 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
         (entry.row as LevelRow).in_transit      += inTransit;
         (entry.row as LevelRow).zakazano        += zakazano;
         (entry.row as LevelRow).avg_daily_sales += avgDailySales;
+        (entry.row as LevelRow).total_sales_6m  += totalSales6m;
+        if (daysCount > 0 && (entry.row as LevelRow).days_count === 0) {
+          (entry.row as LevelRow).days_count = daysCount;
+        }
       }
       (entry.row as LevelRow).itemCount += 1;
       cur = entry.children;
@@ -134,13 +145,18 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
     if (!cur.has(prodKey)) {
       const node: ProductRow = {
         key: prodKey, rowType: 'product', label: r.product_name,
-        balance: 0, in_transit: inTransit, zakazano, avg_daily_sales: 0, itemCount: 0, children: [],
+        balance: 0, in_transit: inTransit, zakazano,
+        avg_daily_sales: 0, total_sales_6m: 0, days_count: 0, itemCount: 0, children: [],
       };
       cur.set(prodKey, { row: node, children: new Map() });
     }
     const prodEntry = cur.get(prodKey)!;
     (prodEntry.row as ProductRow).balance += Number(r.balance);
-    if (isFirst) (prodEntry.row as ProductRow).avg_daily_sales = avgDailySales;
+    if (isFirst) {
+      (prodEntry.row as ProductRow).avg_daily_sales = avgDailySales;
+      (prodEntry.row as ProductRow).total_sales_6m  = totalSales6m;
+      if (daysCount > 0) (prodEntry.row as ProductRow).days_count = daysCount;
+    }
     (prodEntry.row as ProductRow).itemCount += 1;
 
     // Warehouse node (leaf)
@@ -476,6 +492,47 @@ export default function MrpDataTable() {
               {n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
             </Text>
           </div>
+        );
+      },
+    },
+    {
+      title: 'Продажи 6 мес',
+      dataIndex: 'total_sales_6m',
+      width: colWidth,
+      align: 'right',
+      sorter: (a, b) => Number((a as LevelRow | ProductRow).total_sales_6m ?? 0) - Number((b as LevelRow | ProductRow).total_sales_6m ?? 0),
+      render: (_val: number, record) => {
+        if (record.rowType === 'warehouse') return null;
+        const n = Number((record as LevelRow | ProductRow).total_sales_6m ?? 0);
+        if (n <= 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+        const isLevel = record.rowType === 'level';
+        return (
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            background: isLevel ? '#f0fdf4' : '#dcfce7',
+            border: isLevel ? '1px solid #16a34a30' : 'none',
+            borderRadius: 8, padding: '3px 12px', minWidth: 64,
+          }}>
+            <Text strong style={{ color: '#16a34a', fontSize: isLevel ? 14 : 13 }}>
+              {n.toLocaleString('ru-RU', { maximumFractionDigits: 0 })}
+            </Text>
+          </div>
+        );
+      },
+    },
+    {
+      title: 'Кол-во дней',
+      dataIndex: 'days_count',
+      width: 110,
+      align: 'right',
+      render: (_val: number, record) => {
+        if (record.rowType === 'warehouse') return null;
+        const n = Number((record as LevelRow | ProductRow).days_count ?? 0);
+        if (n <= 0) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+        return (
+          <Text style={{ color: '#6b7280', fontSize: 12 }}>
+            {n} д.
+          </Text>
         );
       },
     },
