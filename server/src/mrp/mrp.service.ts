@@ -16,18 +16,30 @@ const CACHE_TTL = {
 const AVG_SALES_SUBQUERY = `
   SELECT
     product_id,
-    sum(quantity) AS total_sales_6m,
+    sum(month_qty) AS total_sales_6m,
     dateDiff('day',
       toStartOfMonth(toDate(now()) - INTERVAL 6 MONTH),
       toDate(now())
     ) AS days_count,
-    sum(quantity) / dateDiff('day',
+    sum(month_qty) / dateDiff('day',
       toStartOfMonth(toDate(now()) - INTERVAL 6 MONTH),
       toDate(now())
-    ) AS avg_daily_sales
-  FROM sales_analysis
-  WHERE sale_date >= toStartOfMonth(toDate(now()) - INTERVAL 6 MONTH)
-    AND quantity > 0
+    ) AS avg_daily_sales,
+    arrayStringConcat(
+      groupArray(concat(month, ':', toString(month_qty))),
+      '|'
+    ) AS sales_6m_details
+  FROM (
+    SELECT
+      product_id,
+      formatDateTime(toStartOfMonth(sale_date), '%Y-%m') AS month,
+      sum(quantity) AS month_qty
+    FROM sales_analysis
+    WHERE sale_date >= toStartOfMonth(toDate(now()) - INTERVAL 6 MONTH)
+      AND quantity > 0
+    GROUP BY product_id, month
+    ORDER BY month
+  )
   GROUP BY product_id
 `;
 
@@ -55,6 +67,53 @@ const ZAKAZANO_SUBQUERY = `
     GROUP BY product_id, purchase_order
   ) p ON z."Номенклатура_Key" = p.product_id AND z.uuid = p.purchase_order
   GROUP BY z."Номенклатура_Key"
+`;
+
+const ZAKAZANO_DETAILS_SUBQUERY = `
+  SELECT
+    "Номенклатура_Key",
+    arrayStringConcat(
+      groupArray(concat(order_date, ':', toString(qty))),
+      '|'
+    ) AS zakazano_details
+  FROM (
+    SELECT
+      "Номенклатура_Key",
+      formatDateTime(order_date_raw, '%d.%m.%Y') AS order_date,
+      sum(greatest(ordered_qty - purchased_qty, 0)) AS qty
+    FROM (
+      SELECT
+        z.uuid,
+        z."Номенклатура_Key",
+        z.ordered_qty,
+        z.order_date_raw,
+        coalesce(p.qty, 0) AS purchased_qty
+      FROM (
+        SELECT
+          uuid,
+          "Номенклатура_Key",
+          sum("Количество") AS ordered_qty,
+          min("Дата") AS order_date_raw
+        FROM "ЗаказПоставщику_Товары"
+        WHERE "Отменено" = false
+        GROUP BY uuid, "Номенклатура_Key"
+      ) z
+      LEFT JOIN (
+        SELECT product_id, purchase_order, sum(quantity) AS qty
+        FROM purchases
+        WHERE concat(toString(purchase_order), toString(product_id)) IN (
+          SELECT concat(toString(uuid), toString("Номенклатура_Key"))
+          FROM "ЗаказПоставщику_Товары"
+          WHERE "Отменено" = false
+        )
+        GROUP BY product_id, purchase_order
+      ) p ON z."Номенклатура_Key" = p.product_id AND z.uuid = p.purchase_order
+    )
+    GROUP BY "Номенклатура_Key", order_date
+    HAVING qty > 0
+    ORDER BY order_date
+  )
+  GROUP BY "Номенклатура_Key"
 `;
 
 @Injectable()
@@ -150,7 +209,7 @@ export class MrpService {
   // ─── Report (paginated, cached) ────────────────────────────────────────────
 
   async getReport(filters: MrpFilterDto) {
-    const cacheKey = `mrp:report:${JSON.stringify(filters)}`;
+    const cacheKey = `mrp:report:v3:${JSON.stringify(filters)}`;
     const cached = await this.cache.get(cacheKey);
     if (cached) return cached;
 
@@ -194,7 +253,7 @@ export class MrpService {
 
     try {
       // Check Redis cache first
-      const cacheKey = 'mrp:preload:stream';
+      const cacheKey = 'mrp:preload:stream:v3';
       const cached = await this.cache.get<{ data: MrpRow[]; total: number; date: string }>(cacheKey);
       if (cached) {
         send('progress', { pct: 100, message: 'Данные из кэша', loaded: cached.total, total: cached.total });
@@ -216,11 +275,14 @@ export class MrpService {
           any(coalesce(pit.in_transit, 0))                AS in_transit,
           any(coalesce(pit.in_transit_date_min, ''))      AS in_transit_date_min,
           any(coalesce(pit.in_transit_date_max, ''))      AS in_transit_date_max,
+          any(coalesce(pit.in_transit_details, ''))       AS in_transit_details,
           any(coalesce(zk.zakazano, 0))                   AS zakazano,
           any(coalesce(zk.zakazano_date_min, ''))         AS zakazano_date_min,
           any(coalesce(zk.zakazano_date_max, ''))         AS zakazano_date_max,
+          any(coalesce(zkd.zakazano_details, ''))         AS zakazano_details,
           any(coalesce(avgs.avg_daily_sales, 0))          AS avg_daily_sales,
           any(coalesce(avgs.total_sales_6m, 0))           AS total_sales_6m,
+          any(coalesce(avgs.sales_6m_details, ''))        AS sales_6m_details,
           any(toString(t."Номенклатура_Key"))              AS product_id
         FROM "ТоварыНаСкладах" t
         INNER JOIN "Номенклатура" n      ON t."Номенклатура_Key"    = n.uuid
@@ -228,16 +290,30 @@ export class MrpService {
         INNER JOIN "Склады" s            ON t."Склад_Key"           = s.uuid
         LEFT JOIN (
           SELECT product_id,
-            sum(quantity)                                   AS in_transit,
-            formatDateTime(min(date), '%d.%m.%Y')           AS in_transit_date_min,
-            formatDateTime(max(date), '%d.%m.%Y')           AS in_transit_date_max
-          FROM purchases
-          WHERE "Регистратор_Key" NOT IN (
-            SELECT DISTINCT "Распоряжение_Key" FROM "ПоступлениеТоваров_Товары"
+            sum(qty)                                        AS in_transit,
+            formatDateTime(min(date_sort), '%d.%m.%Y')      AS in_transit_date_min,
+            formatDateTime(max(date_sort), '%d.%m.%Y')      AS in_transit_date_max,
+            arrayStringConcat(
+              groupArray(concat(purchase_date, ':', toString(qty))),
+              '|'
+            )                                               AS in_transit_details
+          FROM (
+            SELECT
+              product_id,
+              formatDateTime(date, '%d.%m.%Y') AS purchase_date,
+              sum(quantity) AS qty,
+              min(date) AS date_sort
+            FROM purchases
+            WHERE "Регистратор_Key" NOT IN (
+              SELECT DISTINCT "Распоряжение_Key" FROM "ПоступлениеТоваров_Товары"
+            )
+            GROUP BY product_id, purchase_date
+            ORDER BY purchase_date
           )
           GROUP BY product_id
         ) pit ON t."Номенклатура_Key" = pit.product_id
         LEFT JOIN (${ZAKAZANO_SUBQUERY}) zk ON t."Номенклатура_Key" = zk."Номенклатура_Key"
+        LEFT JOIN (${ZAKAZANO_DETAILS_SUBQUERY}) zkd ON t."Номенклатура_Key" = zkd."Номенклатура_Key"
         LEFT JOIN (${AVG_SALES_SUBQUERY}) avgs ON t."Номенклатура_Key" = avgs.product_id
         GROUP BY
           n."Наименование", ph."Уровень_1", ph."Уровень_2",
@@ -405,11 +481,14 @@ export class MrpService {
         any(coalesce(pit.in_transit, 0))                AS in_transit,
         any(coalesce(pit.in_transit_date_min, ''))      AS in_transit_date_min,
         any(coalesce(pit.in_transit_date_max, ''))      AS in_transit_date_max,
+        any(coalesce(pit.in_transit_details, ''))       AS in_transit_details,
         any(coalesce(zk.zakazano, 0))                   AS zakazano,
         any(coalesce(zk.zakazano_date_min, ''))         AS zakazano_date_min,
         any(coalesce(zk.zakazano_date_max, ''))         AS zakazano_date_max,
+        any(coalesce(zkd.zakazano_details, ''))         AS zakazano_details,
         any(coalesce(avgs.avg_daily_sales, 0))          AS avg_daily_sales,
         any(coalesce(avgs.total_sales_6m, 0))           AS total_sales_6m,
+        any(coalesce(avgs.sales_6m_details, ''))        AS sales_6m_details,
         toString(t."Номенклатура_Key")                  AS product_id
       FROM "ТоварыНаСкладах" t
       INNER JOIN "Номенклатура" n      ON t."Номенклатура_Key"    = n.uuid
@@ -417,16 +496,30 @@ export class MrpService {
       INNER JOIN "Склады" s            ON t."Склад_Key"           = s.uuid
       LEFT JOIN (
         SELECT product_id,
-          sum(quantity)                                   AS in_transit,
-          formatDateTime(min(date), '%d.%m.%Y %H:%M')     AS in_transit_date_min,
-          formatDateTime(max(date), '%d.%m.%Y %H:%M')     AS in_transit_date_max
-        FROM purchases
-        WHERE "Регистратор_Key" NOT IN (
-          SELECT DISTINCT "Распоряжение_Key" FROM "ПоступлениеТоваров_Товары"
+          sum(qty)                                      AS in_transit,
+          formatDateTime(min(date_sort), '%d.%m.%Y %H:%M') AS in_transit_date_min,
+          formatDateTime(max(date_sort), '%d.%m.%Y %H:%M') AS in_transit_date_max,
+          arrayStringConcat(
+            groupArray(concat(purchase_date, ':', toString(qty))),
+            '|'
+          )                                               AS in_transit_details
+        FROM (
+          SELECT
+            product_id,
+            formatDateTime(date, '%d.%m.%Y') AS purchase_date,
+            sum(quantity) AS qty,
+            min(date) AS date_sort
+          FROM purchases
+          WHERE "Регистратор_Key" NOT IN (
+            SELECT DISTINCT "Распоряжение_Key" FROM "ПоступлениеТоваров_Товары"
+          )
+          GROUP BY product_id, purchase_date
+          ORDER BY purchase_date
         )
         GROUP BY product_id
       ) pit ON t."Номенклатура_Key" = pit.product_id
       LEFT JOIN (${ZAKAZANO_SUBQUERY}) zk ON t."Номенклатура_Key" = zk."Номенклатура_Key"
+      LEFT JOIN (${ZAKAZANO_DETAILS_SUBQUERY}) zkd ON t."Номенклатура_Key" = zkd."Номенклатура_Key"
       LEFT JOIN (${AVG_SALES_SUBQUERY}) avgs ON t."Номенклатура_Key" = avgs.product_id
       ${where}
       GROUP BY
@@ -450,10 +543,13 @@ export interface MrpRow {
   in_transit: number;
   in_transit_date_min: string;
   in_transit_date_max: string;
+  in_transit_details: string;
   zakazano: number;
   zakazano_date_min: string;
   zakazano_date_max: string;
+  zakazano_details: string;
   avg_daily_sales: number;
   total_sales_6m: number;
+  sales_6m_details: string;
   product_id: string;
 }

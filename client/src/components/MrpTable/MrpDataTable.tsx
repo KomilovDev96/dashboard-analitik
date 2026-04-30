@@ -7,6 +7,7 @@ import {
   AppstoreOutlined, MinusSquareOutlined, PlusSquareOutlined,
   FolderOutlined, FolderOpenOutlined, TagOutlined, LoadingOutlined,
   FullscreenOutlined, FullscreenExitOutlined, BarChartOutlined,
+  CalendarOutlined,
 } from '@ant-design/icons';
 import { useMrpStore } from '../../stores/mrpStore';
 import type { MrpRow } from '../../types';
@@ -17,6 +18,11 @@ const { Text } = Typography;
 // ─── Level colours ────────────────────────────────────────────────────────────
 const LEVEL_COLORS = ['#6366f1', '#8b5cf6', '#a855f7', '#ec4899'];
 
+interface DateQuantity {
+  date: string;
+  quantity: number;
+}
+
 // ─── Tree row type ────────────────────────────────────────────────────────────
 interface LevelRow {
   key: string;
@@ -25,9 +31,12 @@ interface LevelRow {
   label: string;
   balance: number;
   in_transit: number;
+  in_transit_details: DateQuantity[];
   zakazano: number;
+  zakazano_details: DateQuantity[];
   avg_daily_sales: number;
   total_sales_6m: number;
+  sales_6m_details: DateQuantity[];
   itemCount: number;
   children: TreeRow[];
 }
@@ -39,11 +48,14 @@ interface ProductRow {
   in_transit: number;
   in_transit_date_min: string;
   in_transit_date_max: string;
+  in_transit_details: DateQuantity[];
   zakazano: number;
   zakazano_date_min: string;
   zakazano_date_max: string;
+  zakazano_details: DateQuantity[];
   avg_daily_sales: number;
   total_sales_6m: number;
+  sales_6m_details: DateQuantity[];
   product_id: string;
   itemCount: number;
   children: WarehouseRow[];
@@ -97,11 +109,127 @@ const fmtDateRange = (min: string, max: string): string | null => {
   if (!min || !max || min === max) return min || max;
   return `${min} — ${max}`;
 };
+const parseDateKey = (date: string) => {
+  if (/^\d{4}-\d{2}$/.test(date)) {
+    const [year, month] = date.split('-').map(Number);
+    return new Date(year, month - 1, 1).getTime();
+  }
+  const [day, month, year] = date.split('.').map(Number);
+  return new Date(year || 0, (month || 1) - 1, day || 1).getTime();
+};
+const parseDateDetails = (details?: string): DateQuantity[] => {
+  if (!details) return [];
+  return details
+    .split('|')
+    .map((part) => {
+      const separator = part.indexOf(':');
+      if (separator < 0) return null;
+      const date = part.slice(0, separator);
+      const quantity = Number(part.slice(separator + 1));
+      if (!date || Number.isNaN(quantity) || quantity === 0) return null;
+      return { date, quantity };
+    })
+    .filter((row): row is DateQuantity => row !== null);
+};
+const parseMonthDetails = (details?: string): DateQuantity[] => {
+  if (!details) return [];
+  return details
+    .split('|')
+    .map((part) => {
+      const separator = part.indexOf(':');
+      if (separator < 0) return null;
+      const month = part.slice(0, separator);
+      const quantity = Number(part.slice(separator + 1));
+      if (!month || Number.isNaN(quantity) || quantity === 0) return null;
+      return { date: month, quantity };
+    })
+    .filter((row): row is DateQuantity => row !== null);
+};
+const mergeDateDetails = (target: DateQuantity[], source: DateQuantity[]) => {
+  for (const item of source) {
+    const existing = target.find((row) => row.date === item.date);
+    if (existing) existing.quantity += item.quantity;
+    else target.push({ ...item });
+  }
+  target.sort((a, b) => parseDateKey(a.date) - parseDateKey(b.date));
+};
 
-function MonthlySalesPopover({ productId }: { productId: string }) {
+function DateQuantityPopover({
+  title,
+  rows,
+  color,
+  children,
+}: {
+  title: string;
+  rows: DateQuantity[];
+  color: string;
+  children: React.ReactNode;
+}) {
+  if (rows.length === 0) return <>{children}</>;
+
+  const total = rows.reduce((s, r) => s + r.quantity, 0);
+  const content = (
+    <Table<DateQuantity>
+      size="small"
+      pagination={false}
+      dataSource={rows}
+      rowKey="date"
+      style={{ minWidth: 220 }}
+      summary={() => (
+        <Table.Summary.Row>
+          <Table.Summary.Cell index={0}>
+            <Text strong style={{ fontSize: 12 }}>Итого</Text>
+          </Table.Summary.Cell>
+          <Table.Summary.Cell index={1} align="right">
+            <Text strong style={{ color, fontSize: 12 }}>
+              {total.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
+            </Text>
+          </Table.Summary.Cell>
+        </Table.Summary.Row>
+      )}
+      columns={[
+        {
+          title: 'Дата',
+          dataIndex: 'date',
+          render: (date: string) => <Text style={{ fontSize: 12 }}>{date}</Text>,
+        },
+        {
+          title: 'Кол-во',
+          dataIndex: 'quantity',
+          align: 'right',
+          render: (quantity: number) => (
+            <Text strong style={{ color, fontSize: 12 }}>
+              {quantity.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
+            </Text>
+          ),
+        },
+      ]}
+    />
+  );
+
+  return (
+    <Popover
+      trigger="click"
+      placement="left"
+      title={<span style={{ fontSize: 13 }}><CalendarOutlined style={{ marginRight: 6, color }} />{title}</span>}
+      content={content}
+    >
+      <button
+        type="button"
+        style={{ border: 0, background: 'transparent', padding: 0, cursor: 'pointer' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </button>
+    </Popover>
+  );
+}
+
+function MonthlySalesPopover({ productId, initialRows }: { productId?: string; initialRows?: DateQuantity[] }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<{ month: string; sales: number }[]>([]);
+  const hasInitialRows = (initialRows?.length ?? 0) > 0;
 
   useEffect(() => {
     if (!open) return;
@@ -112,7 +240,7 @@ function MonthlySalesPopover({ productId }: { productId: string }) {
 
   const handleOpenChange = async (next: boolean) => {
     setOpen(next);
-    if (next && rows.length === 0 && productId) {
+    if (next && rows.length === 0 && productId && !hasInitialRows) {
       setLoading(true);
       try {
         const res = await mrpApi.getProductMonthlySales(productId);
@@ -123,19 +251,22 @@ function MonthlySalesPopover({ productId }: { productId: string }) {
     }
   };
 
-  const total = rows.reduce((s, r) => s + r.sales, 0);
+  const displayRows = hasInitialRows
+    ? (initialRows ?? []).map((r) => ({ month: r.date, sales: r.quantity }))
+    : rows;
+  const total = displayRows.reduce((s, r) => s + r.sales, 0);
 
   const content = (
     <div style={{ minWidth: 200 }}>
       {loading ? (
         <div style={{ textAlign: 'center', padding: '16px 0' }}><Spin size="small" /></div>
-      ) : rows.length === 0 ? (
+      ) : displayRows.length === 0 ? (
         <Text type="secondary" style={{ fontSize: 12 }}>Нет данных</Text>
       ) : (
         <Table<{ month: string; sales: number }>
           size="small"
           pagination={false}
-          dataSource={rows}
+          dataSource={displayRows}
           rowKey="month"
           summary={() => (
             <Table.Summary.Row>
@@ -185,7 +316,7 @@ function MonthlySalesPopover({ productId }: { productId: string }) {
         type="text"
         icon={<BarChartOutlined />}
         style={{ color: '#16a34a', padding: '0 4px', height: 22, fontSize: 12 }}
-        disabled={!productId}
+        disabled={!productId && !hasInitialRows}
       />
     </Popover>
   );
@@ -216,11 +347,14 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
     const inTransit        = Number(r.in_transit ?? 0);
     const inTransitDateMin = r.in_transit_date_min ?? '';
     const inTransitDateMax = r.in_transit_date_max ?? '';
+    const inTransitDetails = parseDateDetails(r.in_transit_details);
     const zakazano         = Number(r.zakazano   ?? 0);
     const zakazanoDateMin  = r.zakazano_date_min ?? '';
     const zakazanoDateMax  = r.zakazano_date_max ?? '';
+    const zakazanoDetails  = parseDateDetails(r.zakazano_details);
     const avgDailySales    = Number(r.avg_daily_sales ?? 0);
     const totalSales6m     = Number(r.total_sales_6m ?? 0);
+    const sales6mDetails   = parseMonthDetails(r.sales_6m_details);
     const productId        = r.product_id ?? '';
     const isFirst          = !seenPerProduct.has(r.product_name);
     if (isFirst) seenPerProduct.add(r.product_name);
@@ -234,8 +368,8 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
       if (!cur.has(curKey)) {
         const node: LevelRow = {
           key: curKey, rowType: 'level', depth: i, label: seg,
-          balance: 0, in_transit: 0, zakazano: 0, avg_daily_sales: 0,
-          total_sales_6m: 0, itemCount: 0, children: [],
+          balance: 0, in_transit: 0, in_transit_details: [], zakazano: 0, zakazano_details: [], avg_daily_sales: 0,
+          total_sales_6m: 0, sales_6m_details: [], itemCount: 0, children: [],
         };
         cur.set(curKey, { row: node, children: new Map() });
       }
@@ -243,9 +377,12 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
       (entry.row as LevelRow).balance += Number(r.balance);
       if (isFirst) {
         (entry.row as LevelRow).in_transit      += inTransit;
+        mergeDateDetails((entry.row as LevelRow).in_transit_details, inTransitDetails);
         (entry.row as LevelRow).zakazano        += zakazano;
+        mergeDateDetails((entry.row as LevelRow).zakazano_details, zakazanoDetails);
         (entry.row as LevelRow).avg_daily_sales += avgDailySales;
         (entry.row as LevelRow).total_sales_6m  += totalSales6m;
+        mergeDateDetails((entry.row as LevelRow).sales_6m_details, sales6mDetails);
       }
       (entry.row as LevelRow).itemCount += 1;
       cur = entry.children;
@@ -257,8 +394,10 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
         key: prodKey, rowType: 'product', label: r.product_name,
         balance: 0, in_transit: inTransit,
         in_transit_date_min: inTransitDateMin, in_transit_date_max: inTransitDateMax,
+        in_transit_details: inTransitDetails,
         zakazano, zakazano_date_min: zakazanoDateMin, zakazano_date_max: zakazanoDateMax,
-        avg_daily_sales: 0, total_sales_6m: 0, product_id: productId, itemCount: 0, children: [],
+        zakazano_details: zakazanoDetails,
+        avg_daily_sales: 0, total_sales_6m: 0, sales_6m_details: sales6mDetails, product_id: productId, itemCount: 0, children: [],
       };
       cur.set(prodKey, { row: node, children: new Map() });
     }
@@ -267,11 +406,14 @@ function buildTree(rows: MrpRow[]): LevelRow[] {
     if (isFirst) {
       (prodEntry.row as ProductRow).avg_daily_sales    = avgDailySales;
       (prodEntry.row as ProductRow).total_sales_6m     = totalSales6m;
+      (prodEntry.row as ProductRow).sales_6m_details   = sales6mDetails;
       (prodEntry.row as ProductRow).product_id         = productId;
       (prodEntry.row as ProductRow).in_transit_date_min = inTransitDateMin;
       (prodEntry.row as ProductRow).in_transit_date_max = inTransitDateMax;
+      (prodEntry.row as ProductRow).in_transit_details  = inTransitDetails;
       (prodEntry.row as ProductRow).zakazano_date_min   = zakazanoDateMin;
       (prodEntry.row as ProductRow).zakazano_date_max   = zakazanoDateMax;
+      (prodEntry.row as ProductRow).zakazano_details    = zakazanoDetails;
     }
     (prodEntry.row as ProductRow).itemCount += 1;
 
@@ -549,19 +691,26 @@ export default function MrpDataTable() {
         const isLevel = record.rowType === 'level';
         const prod = record.rowType === 'product' ? record as ProductRow : null;
         const dateRange = prod ? fmtDateRange(prod.in_transit_date_min, prod.in_transit_date_max) : null;
+        const details = (record as LevelRow | ProductRow).in_transit_details ?? [];
+        const dateHint = dateRange || (details.length > 0 ? `${details.length} дат` : null);
+        const badge = (
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            background: isLevel ? '#fef3c715' : '#fef3c725',
+            border: isLevel ? '1px solid #f59e0b30' : 'none',
+            borderRadius: 8, padding: '3px 12px', minWidth: 64,
+          }}>
+            <Text strong style={{ color: '#f59e0b', fontSize: isLevel ? 14 : 13 }}>
+              {n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
+            </Text>
+          </div>
+        );
         return (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
-            <div style={{
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              background: isLevel ? '#fef3c715' : '#fef3c725',
-              border: isLevel ? '1px solid #f59e0b30' : 'none',
-              borderRadius: 8, padding: '3px 12px', minWidth: 64,
-            }}>
-              <Text strong style={{ color: '#f59e0b', fontSize: isLevel ? 14 : 13 }}>
-                {n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
-              </Text>
-            </div>
-            {dateRange && <Text type="secondary" style={{ fontSize: 10 }}>{dateRange}</Text>}
+            <DateQuantityPopover title="В пути по датам" rows={details} color="#f59e0b">
+              {badge}
+            </DateQuantityPopover>
+            {dateHint && <Text type="secondary" style={{ fontSize: 10 }}>{dateHint}</Text>}
           </div>
         );
       },
@@ -579,19 +728,26 @@ export default function MrpDataTable() {
         const isLevel = record.rowType === 'level';
         const prod = record.rowType === 'product' ? record as ProductRow : null;
         const dateRange = prod ? fmtDateRange(prod.zakazano_date_min, prod.zakazano_date_max) : null;
+        const details = (record as LevelRow | ProductRow).zakazano_details ?? [];
+        const dateHint = dateRange || (details.length > 0 ? `${details.length} дат` : null);
+        const badge = (
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            background: isLevel ? '#eff6ff' : '#dbeafe',
+            border: isLevel ? '1px solid #3b82f630' : 'none',
+            borderRadius: 8, padding: '3px 12px', minWidth: 64,
+          }}>
+            <Text strong style={{ color: '#3b82f6', fontSize: isLevel ? 14 : 13 }}>
+              {n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
+            </Text>
+          </div>
+        );
         return (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
-            <div style={{
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              background: isLevel ? '#eff6ff' : '#dbeafe',
-              border: isLevel ? '1px solid #3b82f630' : 'none',
-              borderRadius: 8, padding: '3px 12px', minWidth: 64,
-            }}>
-              <Text strong style={{ color: '#3b82f6', fontSize: isLevel ? 14 : 13 }}>
-                {n.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}
-              </Text>
-            </div>
-            {dateRange && <Text type="secondary" style={{ fontSize: 10 }}>{dateRange}</Text>}
+            <DateQuantityPopover title="Заказано по датам" rows={details} color="#3b82f6">
+              {badge}
+            </DateQuantityPopover>
+            {dateHint && <Text type="secondary" style={{ fontSize: 10 }}>{dateHint}</Text>}
           </div>
         );
       },
@@ -644,11 +800,15 @@ export default function MrpDataTable() {
           </div>
         ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
 
-        if (record.rowType !== 'product' || n <= 0) return badge;
+        const salesDetails = (record as LevelRow | ProductRow).sales_6m_details ?? [];
+        if (salesDetails.length === 0 && record.rowType !== 'product') return badge;
         return (
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             {badge}
-            <MonthlySalesPopover productId={(record as ProductRow).product_id} />
+            <MonthlySalesPopover
+              productId={record.rowType === 'product' ? (record as ProductRow).product_id : undefined}
+              initialRows={salesDetails}
+            />
           </div>
         );
       },

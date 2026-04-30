@@ -37,11 +37,14 @@ export interface MrpRow {
   in_transit: number;
   in_transit_date_min?: string;
   in_transit_date_max?: string;
+  in_transit_details?: string;
   zakazano: number;
   zakazano_date_min?: string;
   zakazano_date_max?: string;
+  zakazano_details?: string;
   avg_daily_sales?: number;
   total_sales_6m?: number;
+  sales_6m_details?: string;
   product_id?: string;
 }
 
